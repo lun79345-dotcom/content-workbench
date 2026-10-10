@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe7ff;
+  --color-brand-500: #3370ff;
+  --color-brand-600: #245bdb;
+  --color-brand-700: #1d4ab3;
+}
+
+body {
+  background: #f5f6f8;
+  color: #1c1917;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer components {
+  .card { @apply rounded-2xl bg-white shadow-[0_1px_2px_rgba(28,25,23,0.04)] ring-1 ring-stone-200/70; }
+  .btn { @apply inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3.5 text-sm font-medium whitespace-nowrap text-stone-700 shadow-[0_1px_1px_rgba(28,25,23,0.04)] transition-colors hover:bg-stone-50 active:scale-[0.98] disabled:cursor-default disabled:opacity-60; }
+  .btn-primary { @apply border-brand-500 bg-brand-500 text-white hover:border-brand-600 hover:bg-brand-600; }
+  .btn-danger { @apply border-red-200 bg-white text-red-600 hover:bg-red-50; }
+  .btn-sm { @apply h-7 px-2 text-xs; }
+  .input { @apply h-9 w-full rounded-lg border border-stone-200 bg-white px-3 text-sm transition-shadow outline-none placeholder:text-stone-400 hover:border-stone-300 focus:border-brand-500 focus:ring-3 focus:ring-brand-100 disabled:bg-stone-50 disabled:text-stone-500; }
+  textarea.input { @apply h-auto py-2; }
+  .label { @apply mb-1 block text-xs font-medium text-stone-500; }
+  .tbl { @apply w-full text-sm; }
+  .tbl th { @apply border-b border-stone-200 bg-stone-50/70 px-3 py-2.5 text-left text-xs font-medium whitespace-nowrap text-stone-500 first:rounded-tl-2xl last:rounded-tr-2xl; }
+  .tbl td { @apply border-b border-stone-100 px-3 py-2.5 align-middle; }
+  .tbl tr:last-child td { @apply border-b-0; }
+  .tbl tr:hover td { @apply bg-stone-50/60; }
+  .tag { @apply inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap; }
+}
