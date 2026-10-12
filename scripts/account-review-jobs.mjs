@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { claimAccountReview, heartbeatReviewWorker, finishAccountReview, failAccountReview } from '../.account-review-worker/account-review-queue.mjs';
+import { claimAiJob, finishAiJob, failAiJob } from '../.account-review-worker/ai-queue.mjs';
 let body = '';
 for await (const part of process.stdin) {
   body += part;
@@ -16,6 +17,10 @@ d.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
 try {
   let result;
   if (input.action === 'claim') result = claimAccountReview(d);
+  else if (input.action === 'claim_ai') result = d.prepare("SELECT name FROM sqlite_master WHERE name='ai_jobs'").get() ? claimAiJob(d) : null;
+  else if (['finish_ai','fail_ai'].includes(input.action) && Number.isSafeInteger(input.id) && typeof input.lease === 'string') {
+    result = input.action === 'finish_ai' ? finishAiJob(d, input.id, input.lease, input.report) : failAiJob(d, input.id, input.lease, input.code);
+  }
   else if (input.action === 'heartbeat') { heartbeatReviewWorker(d); result = true; }
   else if (['finish', 'fail'].includes(input.action) && Number.isSafeInteger(input.id) && typeof input.lease === 'string') {
     result = input.action === 'finish' ? finishAccountReview(d, input.id, input.lease, input.report) : failAccountReview(d, input.id, input.lease, input.code);

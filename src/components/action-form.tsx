@@ -1,10 +1,12 @@
 "use client";
 import { createContext, useActionState, useLayoutEffect, useRef, type ComponentProps } from "react";
 import type { ActionResult } from "@/lib/action-errors";
+import { clearFormDraft } from "./form-draft";
+import { draftCreationSucceeded } from "@/lib/form-draft";
 
 export const FormFeedbackContext = createContext<ActionResult | null>(null);
 
-export function ActionForm({ action, children, ...props }: Omit<ComponentProps<"form">, "action"> & { action: (data: FormData) => Promise<ActionResult> }) {
+export function ActionForm({ action, children, draftKey, ...props }: Omit<ComponentProps<"form">, "action"> & { action: (data: FormData) => Promise<ActionResult>; draftKey?: string }) {
   const form = useRef<HTMLFormElement>(null);
   const alert = useRef<HTMLParagraphElement>(null);
   type Control = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -13,7 +15,14 @@ export function ActionForm({ action, children, ...props }: Omit<ComponentProps<"
     const fields = Array.from(form.current?.elements ?? []).filter((el): el is Control =>
       el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && !["file", "submit", "hidden"].includes(el.type)))
       .map((element) => ({ element, value: element.value, checked: element instanceof HTMLInputElement ? element.checked : undefined }));
-    const next = await action(data);
+    let next: ActionResult;
+    try { next = await action(data); }
+    catch (error) {
+      // A session-expiry redirect to login is not a successful creation.
+      if (draftKey && typeof error === "object" && error && "digest" in error && draftCreationSucceeded(draftKey, error.digest, window.location.origin)) clearFormDraft(draftKey);
+      throw error;
+    }
+    if (next.ok && draftKey) clearFormDraft(draftKey);
     preserved.current = next.error ? fields : null;
     return next;
   }, null);

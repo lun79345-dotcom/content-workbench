@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { accountSignals } from "@/lib/account-anomalies";
+import { AiAssistForm } from "./ai-assist";
 import { get } from "@/lib/db";
 import type { User } from "@/lib/auth";
 import { accounts } from "@/lib/queries";
@@ -25,6 +27,7 @@ export function AccountWeekly({ week, accountId, me }: { week: string; accountId
     report = validateAccountReport(JSON.parse(job.report_json), ids);
   } } catch { /* Retain manual review when a report cannot be read. */ }
   const canEdit = canReviewAccount(me, selected), online = workerOnline(), perf = snapshot.performance;
+  const signals = accountSignals(selected.id);
   const accountSummary = accs.map((a) => ({ account: a, saved: !!get("SELECT account_id FROM account_weekly WHERE account_id=? AND week=?", a.id, week) }));
   return <div className="space-y-5">
     <div className="flex flex-wrap gap-2" aria-label="选择复盘账号">{accountSummary.map(({ account, saved }) => <Link key={account.id} href={`/weekly?week=${week}&account=${account.id}`} className={`btn ${selected.id === account.id ? "btn-primary" : ""}`}>{account.name}<span className="text-xs opacity-70">{saved ? "已填" : "未填"}</span></Link>)}</div>
@@ -34,6 +37,10 @@ export function AccountWeekly({ week, accountId, me }: { week: string; accountId
       <Stat label="成熟作品平均播放" value={fmtNum(perf.average_plays)} sub={`已满7天 · 完整 ${perf.complete} 条`} />
       <Stat label="当前已过审储备" value={`${snapshot.reserve} 条`} sub="按当前状态统计，可继续拍摄/剪辑/发布" />
     </div>
+    <Section title={`账号异常检查 · 最新完整周 ${signals?.week ?? ""}`}>
+      <p className="mb-3 text-xs text-stone-500">定期检查产出与成熟样本，达到规则阈值后提醒负责编导。同周同类提醒只发一次；AI 解读按需生成。</p>
+      {signals?.signals.length ? <><ul className="list-disc space-y-2 pl-5 text-sm text-amber-800">{signals.signals.map(s=><li key={s.key}>{s.text}</li>)}</ul>{canEdit&&<AiAssistForm kind="account_anomaly" entityId={selected.id} label="AI 解读异常与排查建议"/>}</> : <p className="text-sm text-stone-500">暂无达到阈值的异常。样本不足、未满7天或数据未知时，不判断播放下滑。</p>}
+    </Section>
     <Section title="作品表现与数据完整度">
       <p className="mb-4 text-sm leading-relaxed text-stone-500">本周满 7 天的作品：{perf.start}—{perf.end} 发布。可统计播放 {perf.applicable} 条，数据完整 {perf.complete} 条，待补 {perf.missing} 条；已登记合计播放 {fmtNum(perf.plays)}，爆款 {perf.hits} 条。未到 7 天或未登记的数据保留为未知。</p>
       <div className="overflow-x-auto"><table className="tbl min-w-[680px]"><thead><tr><th>作品</th><th>发布</th><th>抖音7天</th><th>视频号7天</th><th>合计</th><th>状态</th></tr></thead><tbody>{perf.videos.map((v) => <tr key={v.id}><td className="min-w-48"><Link href={`/videos/${v.id}`} className="text-brand-700 hover:underline">{v.code} · {v.title}</Link></td><td className="whitespace-nowrap">{v.published_at}</td><td>{fmtNum(v.douyin_plays_d7)}</td><td>{fmtNum(v.wechat_plays_d7)}</td><td>{fmtNum(v.total_plays_d7)}</td><td><Tag tone={v.plays_complete ? "green" : v.plays_applicable ? "amber" : "gray"}>{v.plays_complete ? "完整" : v.plays_applicable ? "待补数据" : "仅其他平台"}</Tag></td></tr>)}{!perf.videos.length && <tr><td colSpan={6} className="text-stone-400">该周期暂无已满 7 天的作品</td></tr>}</tbody></table></div>
@@ -50,7 +57,7 @@ export function AccountWeekly({ week, accountId, me }: { week: string; accountId
         <p className="text-xs text-stone-400">生成时间 {job!.completed_at} · AI 建议，尚需负责人确认</p></div> : !job || job.status === "failed" ? <p className="text-sm text-stone-400">数字由系统汇总。AI 只根据现有数据提出建议，缺失的完播率、画像及同行数据会明确标注。</p> : null}
     </Section>
     <Section title={`${selected.name} · 负责人复盘`}>
-      {canEdit ? <AccountReviewForm key={`${selected.id}:${week}:${value?.revision ?? 0}`} accountId={selected.id} week={week} value={value ? { ...value } : undefined} report={report} action={saveAccountReviewForm} /> : value ? <dl className="space-y-4 text-sm">{[["本周结论", value.summary], ["有效做法", value.successes], ["问题", value.issues], ["下周计划", value.next_plan]].map(([label, text]) => <div key={label}><dt className="font-medium text-stone-500">{label}</dt><dd className="mt-2 whitespace-pre-wrap">{text || "暂未填写"}</dd></div>)}</dl> : <p className="text-sm text-stone-400">该账号负责人暂未填写复盘</p>}
+      {canEdit ? <AccountReviewForm key={`${selected.id}:${week}:${value?.revision ?? 0}`} userId={me.id} accountId={selected.id} week={week} value={value ? { ...value } : undefined} report={report} action={saveAccountReviewForm} /> : value ? <dl className="space-y-4 text-sm">{[["本周结论", value.summary], ["有效做法", value.successes], ["问题", value.issues], ["下周计划", value.next_plan]].map(([label, text]) => <div key={label}><dt className="font-medium text-stone-500">{label}</dt><dd className="mt-2 whitespace-pre-wrap">{text || "暂未填写"}</dd></div>)}</dl> : <p className="text-sm text-stone-400">该账号负责人暂未填写复盘</p>}
     </Section>
   </div>;
 }

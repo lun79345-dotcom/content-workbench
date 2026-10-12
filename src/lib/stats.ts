@@ -48,12 +48,31 @@ export function bonusByVideo() {
 export function accountMonthly(month: string) {
   const r = getRules();
   const rows = dataRows(month);
+  // Samples are cumulative readings; count only the latest matching sample per video/platform.
+  const samples = all<{ video_id: number; platform: string; plays: number }>(`
+    SELECT s.video_id,s.platform,s.plays FROM metric_snapshots s JOIN videos v ON v.id=s.video_id
+    WHERE v.stage='已发布' AND v.archived_at IS NULL AND substr(v.published_at,1,7)=?
+      AND s.published_at=v.published_at AND s.plays IS NOT NULL
+      AND ((s.platform='douyin' AND s.publication_url=v.douyin_url)
+        OR (s.platform='wechat' AND s.publication_url=v.wechat_url))
+    ORDER BY s.collected_date DESC,s.collected_at DESC,s.id DESC`, month);
+  const latest = new Map<number, Map<string, number>>();
+  for (const sample of samples) {
+    const platforms = latest.get(sample.video_id) ?? new Map<string, number>();
+    if (!platforms.has(sample.platform)) platforms.set(sample.platform, sample.plays);
+    latest.set(sample.video_id, platforms);
+  }
   const prev = prevMonth(month);
   const prevRows = dataRows(prev);
   const targets = all<{ account_id: number; target_plays: number }>("SELECT account_id, target_plays FROM targets WHERE month=?", month);
   return accounts().map((a) => {
     const vs = rows.filter((x) => x.account_id === a.id);
     const plays = vs.reduce((s, x) => s + dataCheckpoint(x, "d7").total, 0);
+    const sampled = vs.filter((x) => latest.has(x.id));
+    const latestPlays = sampled.length ? sampled.reduce((sum, x) => sum + [...latest.get(x.id)!.values()].reduce((s, n) => s + n, 0), 0) : null;
+    const checkpoints = vs.map((x) => dataCheckpoint(x, "d7")).filter((x) => x.applicable);
+    const pendingCount = checkpoints.filter((x) => !x.complete).length;
+    const hasCheckpointPlays = checkpoints.some((x) => x.douyin != null || x.wechat != null);
     const fans = vs.reduce((s, x) => s + (x.fans7 ?? 0), 0);
     const hits = vs.filter((x) => {
       const c = dataCheckpoint(x, "d7"), basis: BonusBasis | null = x.bonus_snapshot ? JSON.parse(x.bonus_snapshot) : null;
@@ -65,7 +84,8 @@ export function accountMonthly(month: string) {
     const editor = get<{ name: string }>("SELECT name FROM users WHERE id=?", a.editor_id)?.name ?? "—";
     return {
       account: a, editor, isNew: isNewAccountAt(a.new_since, month + "-15", r),
-      count: vs.length, plays, fans, hits, target, rate: target ? plays / target : null,
+      count: vs.length, plays, fans, hits, latestPlays, sampledCount: sampled.length, pendingCount, hasCheckpointPlays,
+      target, rate: target ? plays / target : null,
       suggestNext: plays ? Math.round(plays * r.target_growth) : null,
       suggestThis: prevPlays ? Math.round(prevPlays * r.target_growth) : null,
     };

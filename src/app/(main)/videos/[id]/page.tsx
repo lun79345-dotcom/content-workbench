@@ -1,3 +1,4 @@
+import { AiAssistForm } from "@/components/ai-assist";
 import { ActionForm } from "@/components/action-form";
 import Link from "next/link";
 import { ArrowRight, Check, ChevronLeft } from "lucide-react";
@@ -14,6 +15,8 @@ import { Field, PageHeader, Section, Tag } from "@/components/ui";
 import { canAdvanceVideo, canManageVideo } from "@/lib/permissions";
 import { DemandBrief, DueTag, VideoForm } from "@/components/video";
 import { ReviewDecision } from "@/components/review";
+import { VideoAssets } from "@/components/video-assets";
+import { videoAssets, assetKindsFor } from "@/lib/video-assets";
 import { PublicationForm } from "@/components/publication-form";
 import { advanceForm as advance, deleteVideoForm as deleteVideo, publishVideoForm as publishVideo, saveMetricsForm as saveMetrics, setStageForm as setStage, updateVideoForm as updateVideo, requestWorkloadForm as requestWorkload, decideWorkloadForm as decideWorkload } from "../actions";
 
@@ -31,7 +34,7 @@ const NEXT_TIP: Record<string, string> = {
 };
 const PLATFORM = { douyin: "抖音", wechat: "视频号", xhs: "小红书" } as const;
 
-type Review = { id: number; node: string; status: string; reason: string | null; comment: string | null; recheck: string | null; submitted_at: string; done_at: string | null; reviewer_id: number; submitter: string; reviewer: string };
+type Review = { asset_id_snapshot: number | null; id: number; node: string; status: string; reason: string | null; comment: string | null; recheck: string | null; submitted_at: string; done_at: string | null; reviewer_id: number; submitter: string; reviewer: string };
 type Metric = { checkpoint: string; platform: keyof typeof PLATFORM; plays: number | null; likes: number | null; comments: number | null; collects: number | null; shares: number | null; fans: number | null; source: string; updated_at: string };
 
 export default async function VideoPage({ params }: { params: Promise<{ id: string }> }) {
@@ -48,6 +51,12 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
   const metrics = all<Metric>("SELECT * FROM metrics WHERE video_id=?", v.id);
   const m = (cp: string, p: string) => metrics.find((x) => x.checkpoint === cp && x.platform === p);
   const stageIdx = STAGES.indexOf(v.stage);
+  const assets = videoAssets(v.id);
+  const nextCheckpoint = v.published_at ? (["d7", "d30"] as const).find((cp) => needsMetrics(v.id, cp)) : undefined;
+  const nextDue = v.published_at && nextCheckpoint ? addDays(v.published_at, nextCheckpoint === "d7" ? 7 : 30) : undefined;
+  const publishedTask = nextDue ? `${nextDue > today() ? `${nextDue} 核对` : "现在核对"}第${nextCheckpoint === "d7" ? 7 : 30}天数据` : "数据节点已登记，可查看播放趋势";
+  const currentOwner = pending?.reviewer ?? (v.stage === "剪辑" ? v.cutter_name ?? "待指定剪辑" : v.editor_name);
+
 
   return (
     <>
@@ -85,12 +94,12 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
         <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-stone-50 p-4">
           <div className="min-w-0 flex-1 text-sm">
             <div className="font-medium">
-              {v.stage === "已发布" ? "已发布，第 7 / 30 天在下方登记播放数据"
+              {v.stage === "已发布" ? `下一步：${publishedTask}`
                 : pending ? `等待 ${pending.reviewer} ${pending.node}`
                 : NEXT_ACTION[v.stage] ? `下一步：${NEXT_ACTION[v.stage]}` : v.stage === "待发布" ? "下一步：发布后在下方登记链接" : v.stage}
             </div>
             <div className="mt-0.5 text-xs text-stone-500">
-              {pending ? `${pending.submitted_at.slice(5, 16)} 提交，审核人会收到飞书通知` : NEXT_TIP[v.stage] ?? ""}
+              {v.stage === "已发布" ? "每日采集用于观察表现；第7、30天数据经确认后参与考核。" : pending ? `${pending.submitted_at.slice(5, 16)} 提交 · 当前由 ${currentOwner} 处理` : `当前由 ${currentOwner ?? "待指定负责人"} 处理。${NEXT_TIP[v.stage] ?? ""}`}
             </div>
           </div>
           {canAdvanceVideo(me, v) && NEXT_ACTION[v.stage] && (
@@ -126,7 +135,9 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
         </Section>
       )}
 
-      {v.published_at && <MetricsSection v={v} m={m} canEdit={canEdit} />}
+      {!v.published_at && <VideoAssets id={v.id} revision={v.revision} assets={assets} kinds={assetKindsFor(me, v)} approvedIds={reviews.filter((r) => r.status === "通过" && r.asset_id_snapshot != null).map((r) => r.asset_id_snapshot!)} />}
+
+      {v.published_at && <><MetricsSection v={v} m={m} canEdit={canEdit} /><VideoAssets id={v.id} revision={v.revision} assets={assets} kinds={[]} approvedIds={reviews.filter((r) => r.status === "通过" && r.asset_id_snapshot != null).map((r) => r.asset_id_snapshot!)} /></>}
 
       {(isCutter || requests.length > 0) && <Section title="工作量调整" className="mb-4">
         {isCutter && !requests.some((r) => r.status === "pending") && <ActionForm action={requestWorkload} className="grid gap-3 sm:grid-cols-4">
@@ -170,6 +181,7 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
             <ActionForm action={updateVideo} className="workflow-form mt-4"><input type="hidden" name="id" value={v.id} /><input type="hidden" name="revision" value={v.revision} /><Field label="剪辑备注"><input name="note" defaultValue={v.note ?? ""} className="input" /></Field><Submit className="btn mt-3">保存备注</Submit></ActionForm>
           </div> : null}
         </Section>
+        {!v.archived_at && (canEdit || isCutter || pending?.reviewer_id===me.id) && <Section title="AI 辅助 · 按需使用"><div className="space-y-4">{(canEdit || pending?.reviewer_id===me.id) && <details><summary className="cursor-pointer text-sm font-medium">检查脚本与必拍镜头</summary><AiAssistForm kind="script_check" entityId={v.id} label="AI 检查脚本" script/></details>}{reviews.some(r=>r.status==="打回") && <details><summary className="cursor-pointer text-sm font-medium">把最新打回意见整理为修改清单</summary><AiAssistForm kind="review_changes" entityId={v.id} label="AI 整理修改清单"/></details>}<p className="text-xs text-stone-500">检查和清单不改变审核结论、工作量或奖金。</p></div></Section>}
         <Section title="处理记录">
           <details className="border-b border-stone-100 pb-4" open={!!pending}>
             <summary className="cursor-pointer text-sm font-medium">审核记录（{reviews.length}）{reviews[0] && <span className="ml-2 font-normal text-stone-500">最近：{reviews[0].status}</span>}</summary>
@@ -183,7 +195,8 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
                       <Tag tone={r.status === "通过" ? "green" : r.status === "打回" ? "red" : r.status === "待审" ? "amber" : "gray"}>{r.status}</Tag>
                     </div>
                     {r.reason && <div className="text-red-600">{r.reason}</div>}
-                    {r.comment && <div className="text-stone-600">{r.comment}</div>}
+                    {r.comment && <div className="whitespace-pre-wrap text-stone-600">{r.comment}</div>}
+                    {assets.find((a) => a.id === r.asset_id_snapshot) && <a href={assets.find((a) => a.id === r.asset_id_snapshot)!.url} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-700 underline">本次审核版本 V{assets.find((a) => a.id === r.asset_id_snapshot)!.version}</a>}
                     <div className="text-xs text-stone-400">{r.submitter} 提交 {r.submitted_at.slice(5, 16)} · {r.reviewer} {r.done_at ? `审于 ${r.done_at.slice(5, 16)}` : ""}{r.recheck ? ` · 复审：${r.recheck}` : ""}</div>
                   </li>
                 ))}
@@ -222,6 +235,11 @@ function MetricsSection({ v, m, canEdit }: { v: NonNullable<ReturnType<typeof ge
   return (
     <Section title={`播放数据 · 发布第 ${age} 天`} className="mb-4"
       actions={<span className="text-xs text-stone-400">{isNew ? "新号7折档" : "老号档"}：{tierThresholds(isNew, r).map(fmtNum).join(" / ")}</span>}>
+      {live.length > 0 && <div className="mb-4 space-y-2 rounded-xl bg-brand-50 p-4">
+        <h3 className="text-sm font-medium text-brand-800">最新采集数据</h3>
+        {live.map(({ p, x }) => <div key={p} className="text-sm text-stone-700"><span className="font-medium">{PLATFORM[p]}</span>{p === "douyin" && x!.plays != null && <span className="ml-3 text-lg font-semibold text-brand-700">播放 {fmtNum(x!.plays)}</span>}<p className="mt-1 text-xs">赞 {fmtNum(x!.likes)} · 评论 {fmtNum(x!.comments)} · 收藏 {fmtNum(x!.collects)} · 分享 {fmtNum(x!.shares)}</p><p className="mt-1 text-xs text-stone-500">更新于 {x!.updated_at.slice(5, 16)}</p></div>)}
+        <p className="text-xs text-stone-600">累计数据用于观察，不自动替代第7、30天确认值。</p>
+      </div>}
       <div className="grid gap-4 md:grid-cols-2">
         {(["d7", "d30"] as const).filter((cp) => cp === "d7" || combinedPlays(v.id, cp, bonusPlatforms(basis)).applicable).map((cp) => {
           const due = addDays(v.published_at!, cp === "d7" ? 7 : 30);
@@ -229,6 +247,7 @@ function MetricsSection({ v, m, canEdit }: { v: NonNullable<ReturnType<typeof ge
           const missing = needsMetrics(v.id, cp);
           const idx = c.complete ? tierIndex(c.total, isNew, r) : -1;
           const suggested = m(cp, "douyin")?.plays == null ? checkpointSnapshot(v.id, cp) : undefined;
+          if (age < (cp === "d7" ? 7 : 30)) return <div key={cp} className="rounded-lg bg-stone-50 p-3 text-sm"><p className="font-medium">第{cp === "d7" ? 7 : 30}天 · {due}</p><p className="mt-1 text-stone-500">尚未到登记日期，到期后可核对并保存。</p></div>;
           return (
             <ActionForm key={cp} action={saveMetrics} className="rounded-lg bg-stone-50 p-3">
               <input type="hidden" name="id" value={v.id} /><input type="hidden" name="checkpoint" value={cp} />
@@ -257,13 +276,6 @@ function MetricsSection({ v, m, canEdit }: { v: NonNullable<ReturnType<typeof ge
           );
         })}
       </div>
-      {live.length > 0 && (
-        <div className="mt-3 text-xs text-stone-500">
-          最新数据（TikHub 每日采集）：
-          {live.map(({ p, x }) => <span key={p} className="ml-3">{PLATFORM[p]} {p === "douyin" && x!.plays != null && <>播放{fmtNum(x!.plays)} · </>}赞{fmtNum(x!.likes)} 评{fmtNum(x!.comments)} 藏{fmtNum(x!.collects)} 转{fmtNum(x!.shares)}</span>)}
-          <span className="ml-3 text-stone-400">更新于 {live[0].x!.updated_at.slice(5, 16)}</span>
-        </div>
-      )}
       {history.length > 0 && <details className="mt-4 rounded-lg border border-stone-200 p-3">
         <summary className="cursor-pointer text-sm font-medium">抖音播放量每日记录（{history.length}天）</summary>
         <p className="mt-2 text-xs text-stone-500">每条记录为采集时的累计播放量；第7、30天以当天记录核对，历史缺失不自动补填。</p>

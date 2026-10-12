@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { runCodexReport } from './codex-account-review.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { AI_REPORT_SCHEMA, AI_ANALYSIS_INSTRUCTIONS, validateAiReport } from '../.account-review-worker/ai-analysis.mjs';
+import { runCodexReport, runStructuredReport } from './codex-account-review.mjs';
 
 const configPath = process.env.ACCOUNT_REVIEW_CONFIG;
 if (!configPath) throw new Error('Set ACCOUNT_REVIEW_CONFIG to the local worker config path');
@@ -43,25 +45,27 @@ let connectionDown = false;
 try {
   while (!stopping) {
     try {
-      const job = await request({ action: 'claim' });
+      const weekly = await request({ action: 'claim' });
+      const job = weekly || await request({ action: 'claim_ai' });
+      const kind = weekly ? '复盘' : '拆解';
       if (connectionDown) { process.stdout.write('复盘服务连接已恢复\n'); connectionDown = false; }
       if (job) {
         activeJob = true;
-        process.stdout.write(`开始账号复盘任务 ${job.id}\n`);
+        process.stdout.write(`开始${kind}任务 ${job.id}\n`);
         let report;
-        try { report = await runCodexReport(job.input, { executable: config.codexPath, signal: controller.signal }); }
-        catch (error) { activeJob = false; await request({ action: 'fail', id: job.id, lease: job.lease, code: error.code || 'unavailable' }); process.stdout.write(`复盘任务 ${job.id} 未完成，可在页面重试\n`); continue; }
+        try { report = weekly ? await runCodexReport(job.input, { executable: config.codexPath, signal: controller.signal }) : await runStructuredReport(job.input, { executable: config.codexPath, signal: controller.signal, reportSchema: AI_REPORT_SCHEMA, instructions: AI_ANALYSIS_INSTRUCTIONS, validate: (value) => validateAiReport(value, job.input) }); }
+        catch (error) { activeJob = false; await request({ action: weekly ? 'fail' : 'fail_ai', id: job.id, lease: job.lease, code: error.code || 'unavailable' }); process.stdout.write(`${kind}任务 ${job.id} 未完成，可在页面重试\n`); continue; }
         // Retry publishing the same report after a temporary connection issue; never charge for generating it again.
         let published = false;
         for (let attempt = 0; attempt < 3 && !published; attempt++) {
-          try { published = await request({ action: 'finish', id: job.id, lease: job.lease, report }); }
-          catch { if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 3000)); }
+          try { published = await request({ action: weekly ? 'finish' : 'finish_ai', id: job.id, lease: job.lease, report }); }
+          catch { if (attempt < 2) await delay(3000, undefined, {signal:controller.signal}).catch(()=>{}); }
         }
-        process.stdout.write(`复盘任务 ${job.id} ${published ? '已完成' : '结果未写入，等待任务恢复'}\n`);
+        process.stdout.write(`${kind}任务 ${job.id} ${published ? '已完成' : '结果未写入，等待任务恢复'}\n`);
         activeJob = false;
         continue;
       }
     } catch { activeJob = false; if (!connectionDown) { process.stdout.write('复盘服务暂时无法连接，正在等待恢复\n'); connectionDown = true; } }
-    await new Promise((resolve) => setTimeout(resolve, connectionDown ? 30000 : 10000));
+    await delay(connectionDown ? 30000 : 10000, undefined, {signal:controller.signal}).catch(()=>{});
   }
 } finally { clearInterval(heartbeat); }

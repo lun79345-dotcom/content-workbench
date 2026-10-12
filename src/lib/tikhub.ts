@@ -29,7 +29,7 @@ export function tikhubUsage() {
   return { requests: get<{ n: number }>("SELECT count(*) n FROM tikhub_requests WHERE request_date=?", today())!.n,
     playBatches: get<{ n: number }>("SELECT count(*) n FROM tikhub_requests WHERE request_date=? AND kind='plays'", today())!.n };
 }
-async function call(method: "GET" | "POST", path: string, params: Record<string, string | boolean>, kind = "interaction") {
+export async function call(method: "GET" | "POST", path: string, params: Record<string, string | boolean>, kind = "interaction") {
   const key = process.env.TIKHUB_API_KEY;
   if (!key) throw new Error("未配置 TIKHUB_API_KEY");
   const allowed = transaction(() => {

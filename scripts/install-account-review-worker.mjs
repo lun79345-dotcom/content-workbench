@@ -17,7 +17,7 @@ await fs.mkdir(path.join(directory, 'scripts'), { recursive: true, mode: 0o700 }
 await fs.chmod(directory, 0o700);
 await fs.mkdir(path.join(directory, '.account-review-worker'), { recursive: true, mode: 0o700 });
 for (const file of ['account-review-worker.mjs', 'account-review-jobs.mjs', 'codex-account-review.mjs']) await fs.copyFile(path.join(root, 'scripts', file), path.join(directory, 'scripts', file));
-for (const file of ['account-review-report.mjs', 'account-review-queue.mjs']) await fs.copyFile(path.join(root, '.account-review-worker', file), path.join(directory, '.account-review-worker', file));
+for (const file of ['account-review-report.mjs', 'account-review-queue.mjs', 'ai-analysis.mjs', 'ai-queue.mjs', 'media-source.mjs']) await fs.copyFile(path.join(root, '.account-review-worker', file), path.join(directory, '.account-review-worker', file));
 await fs.writeFile(path.join(directory, 'config.json'), JSON.stringify(config, null, 2), { mode: 0o600 });
 await fs.chmod(path.join(directory, 'config.json'), 0o600);
 for (const name of ['service.log', 'service-error.log']) { const f = await fs.open(path.join(directory, name), 'a', 0o600); await f.close(); }
@@ -36,6 +36,11 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 const agents = path.join(os.homedir(), 'Library/LaunchAgents'); await fs.mkdir(agents, { recursive: true });
 const dest = path.join(agents, label + '.plist'), target = `gui/${process.getuid()}`;
 spawnSync('/bin/launchctl', ['bootout', `${target}/${label}`]);
+// launchd can retain a terminating process until its polling sleep finishes.
+for (let attempt = 0; attempt < 45; attempt++) {
+  if (spawnSync('/bin/launchctl', ['print', `${target}/${label}`], { stdio: 'ignore' }).status !== 0) break;
+  await new Promise(resolve => setTimeout(resolve, 1000));
+}
 await fs.writeFile(dest, plist, { mode: 0o600 });
 const result = spawnSync('/bin/launchctl', ['bootstrap', target, dest], { encoding: 'utf8' });
 if (result.status !== 0) throw new Error('Unable to start the account review service');

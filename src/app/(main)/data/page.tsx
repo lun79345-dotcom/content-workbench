@@ -81,10 +81,15 @@ function VideoTable({ month }: { month: string }) {
 function AccountTable({ month, canEdit }: { month: string; canEdit: boolean }) {
   const rows = accountMonthly(month);
   const sum = rows.reduce((s, x) => ({ count: s.count + x.count, plays: s.plays + x.plays, fans: s.fans + x.fans, hits: s.hits + x.hits }), { count: 0, plays: 0, fans: 0, hits: 0 });
+  const sampledRows = rows.filter((x) => x.latestPlays != null);
+  const latestTotal = sampledRows.length ? sampledRows.reduce((s, x) => s + x.latestPlays!, 0) : null;
+  const pendingTotal = rows.reduce((s, x) => s + x.pendingCount, 0);
+  const hasCheckpointPlays = rows.some((x) => x.hasCheckpointPlays);
   return (
     <div className="card overflow-x-auto">
       <table className="tbl">
-        <thead><tr><th>账号</th><th>阶段</th><th>负责编导</th><th className="text-right">发布条数</th><th className="text-right">双平台播放</th><th className="text-right">涨粉</th><th className="text-right">爆款数</th><th>本月播放目标</th><th className="text-right">达成率</th><th className="text-right">下月建议</th></tr></thead>
+        <caption className="px-4 py-3 text-left text-xs text-stone-500">最新采集播放：{month} 发布视频的最新累计播放，仅合计已采集平台，并非当月新增播放。目标、达成率和爆款仍按第7天确认数据计算。</caption>
+        <thead><tr><th>账号</th><th>阶段</th><th>负责编导</th><th className="text-right">发布条数</th><th className="text-right">最新采集播放</th><th className="text-right">第7天播放</th><th className="text-right">涨粉</th><th className="text-right">爆款数</th><th>本月播放目标</th><th className="text-right">达成率</th><th className="text-right">下月建议</th></tr></thead>
         <tbody>
           {rows.map((x) => (
             <tr key={x.account.id}>
@@ -92,7 +97,8 @@ function AccountTable({ month, canEdit }: { month: string; canEdit: boolean }) {
               <td>{x.isNew ? <Tag tone="purple">新号</Tag> : <Tag>老号</Tag>}</td>
               <td>{x.editor}</td>
               <td className="text-right tabular-nums">{x.count}</td>
-              <td className="text-right tabular-nums">{fmtNum(x.plays)}</td>
+              <td className="text-right tabular-nums">{fmtNum(x.latestPlays)}{x.count > 0 && <div className="text-xs text-stone-400">已采集 {x.sampledCount}/{x.count} 条</div>}</td>
+              <td className="text-right tabular-nums">{x.pendingCount > 0 && !x.hasCheckpointPlays ? "—" : fmtNum(x.plays)}{x.pendingCount > 0 && <div className="text-xs text-amber-600">{x.pendingCount} 条待登记</div>}</td>
               <td className="text-right tabular-nums">{fmtNum(x.fans)}</td>
               <td className="text-right tabular-nums">{x.hits}</td>
               <td>
@@ -104,11 +110,11 @@ function AccountTable({ month, canEdit }: { month: string; canEdit: boolean }) {
                   </ActionForm>
                 ) : fmtNum(x.target)}
               </td>
-              <td className={`text-right tabular-nums ${x.rate == null ? "" : x.rate >= 1 ? "text-emerald-600" : "text-red-600"}`}>{x.rate == null ? "—" : `${Math.round(x.rate * 100)}%`}</td>
-              <td className="text-right tabular-nums text-stone-500">{fmtNum(x.suggestNext)}</td>
+              <td className={`text-right tabular-nums ${x.rate == null || x.pendingCount > 0 ? "" : x.rate >= 1 ? "text-emerald-600" : "text-red-600"}`}>{x.pendingCount > 0 ? "待登记" : x.rate == null ? "—" : `${Math.round(x.rate * 100)}%`}</td>
+              <td className="text-right tabular-nums text-stone-500">{x.pendingCount > 0 ? "—" : fmtNum(x.suggestNext)}</td>
             </tr>
           ))}
-          <tr className="font-medium"><td>合计</td><td /><td /><td className="text-right">{sum.count}</td><td className="text-right">{fmtNum(sum.plays)}</td><td className="text-right">{fmtNum(sum.fans)}</td><td className="text-right">{sum.hits}</td><td /><td /><td /></tr>
+          <tr className="font-medium"><td>合计</td><td /><td /><td className="text-right">{sum.count}</td><td className="text-right">{fmtNum(latestTotal)}</td><td className="text-right">{pendingTotal > 0 && !hasCheckpointPlays ? "—" : fmtNum(sum.plays)}{pendingTotal > 0 && <div className="text-xs text-amber-600">{pendingTotal} 条待登记</div>}</td><td className="text-right">{fmtNum(sum.fans)}</td><td className="text-right">{sum.hits}</td><td /><td /><td /></tr>
         </tbody>
       </table>
     </div>

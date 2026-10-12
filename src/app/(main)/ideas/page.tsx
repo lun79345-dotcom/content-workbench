@@ -1,3 +1,4 @@
+import { AiAssistForm } from "@/components/ai-assist";
 import { ActionForm } from "@/components/action-form";
 import Link from "next/link";
 import { Submit } from "@/components/submit";
@@ -53,6 +54,7 @@ export default async function IdeasPage({ searchParams }: { searchParams: Promis
                 <td className="whitespace-nowrap">{i.account_name ?? "—"}</td>
                 <td className="min-w-64">
                   {i.kind && <Tag>{i.kind}</Tag>} {i.content}
+                  {canGrade && <AiAssistForm kind="idea_brief" entityId={i.id} label="AI 生成需求草稿"/>}
                   {i.ref_url && <a href={i.ref_url} target="_blank" className="ml-1 text-xs text-brand-600">参考↗</a>}
                 </td>
                 <td>

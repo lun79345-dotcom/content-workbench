@@ -1,3 +1,4 @@
+import { notifyAccountAnomalies } from "./account-anomalies";
 import { all, get } from "./db";
 import { dailyBackup } from "./backups";
 import { notify, retryNotifications } from "./notify";
@@ -47,6 +48,8 @@ async function executeJobs() {
       if (needsMetrics(v.id, cp)) await notify(v.editor_id, `📊 ${v.code}《${v.title}》发布满${day}天，请登记已发布平台的数据`, `/videos/${v.id}`, `data-${v.id}-${cp}-${t}`);
     }
   }
+
+  await notifyAccountAnomalies();
 
   const hour = Number(new Intl.DateTimeFormat("en", { timeZone: "Asia/Shanghai", hour: "numeric", hourCycle: "h23" }).format(new Date()));
   if (hour >= 10) {

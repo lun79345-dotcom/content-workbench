@@ -20,7 +20,17 @@ npm run dev
 
 Open http://127.0.0.1:3000 and choose a fictitious role. Development binds to localhost. The seed refuses to overwrite existing business data. Use a separate DATA_DIR for existing databases. Sample publication links use an invalid demo domain; all metrics are fictitious.
 
-## Version 1.1
+## Version 1.2 additions
+
+- **Douyin account research:** inspect up to 60 posts from the last 90 days and rank the top 10 with known views. Queries cache for 24 hours and share the daily TikHub budget.
+- **Selected-video analysis:** fetch details and transcribe only on explicit request. Deploy your own FFmpeg/Whisper.cpp worker or paste a transcript. Local Codex analyzes the text; visual editing and retention cannot be inferred.
+- **Four AI helpers:** editable brief drafts, script checks, rejection-feedback checklists and account-anomaly explanations. Human review remains required; AI never advances approval or changes compensation. Helpers share a 30-job daily cap and a 24-hour per-user/input cache.
+- **Forms and handoffs:** browser-local draft recovery, versioned script/material/cut links and stage-specific next actions.
+- **Monthly views:** latest sampled cumulative views are separate from day-7 KPIs; unknown measurements are not zero.
+
+The base demo never automatically calls TikHub or AI. Use your own credentials, signed-in CLI and optional transcription server. See [deployment notes](docs/server-ai-analysis.md).
+
+## Existing features
 
 - Simpler briefs, account-owner defaults, publication-link recognition and manual scheduling.
 - Eight production stages, rejection reasons, editing workload, requirement history and role-based access.
@@ -30,7 +40,7 @@ Open http://127.0.0.1:3000 and choose a fictitious role. Development binds to lo
 - Persistent daily request caps, retries and mutual exclusion. Defaults: 100 total requests and 10 play batches per day; 0 disables collection.
 - Session expiry, logout revocation, concurrent-edit checks, audit records and locked bonus settlements.
 
-WeChat Channels views remain manual: read_count has not been verified against creator-dashboard measurements. Current cumulative totals never backfill missing past checkpoints. AI uses workspace account data only; competitor benchmarks, retention and audience profiles are not included.
+WeChat Channels views remain manual: read_count has not been verified against creator-dashboard measurements. Current cumulative totals never backfill missing past checkpoints. Weekly AI reviews use workspace account data; account research separately queries public competitor posts. Neither includes retention or audience profiles.
 
 ## Optional integrations
 
@@ -47,7 +57,7 @@ npm run build:review-worker
 ACCOUNT_REVIEW_CONFIG=/absolute/path/to/worker-config.json npm run review:worker
 ```
 
-Generate from the account-review page. The computer must be awake and online. Manual reviews still work when the worker is offline. The prompt contains account names, video titles/types, publication dates and metrics; it excludes employee identities, compensation, internal briefs, publication URLs and integration secrets. Generation runs read-only in a temporary directory with output validation and job leases. Review drafts before adopting and saving.
+Generate from the account-review page. The computer must be awake and online. Manual reviews still work when the worker is offline. Weekly review prompts contain account names, video titles/types, publication dates and metrics. Other helpers use the selected idea, brief, script or review comments; hit analysis uses metrics and transcripts. Integration secrets, compensation and media-download URLs are excluded. Generation runs read-only in a temporary directory with output validation and job leases. Review drafts before adopting and saving.
 
 Optional SSH transport and macOS launch scripts require your own deployment. The public service label is org.contentworkbench.account-review, independent of the internal project.
 
@@ -59,7 +69,7 @@ npm run lint
 npm run build
 ```
 
-Tests use temporary SQLite databases and simulated interfaces; they do not call paid APIs or send real Feishu messages. 99 tests cover access control, workflow, data completeness, bonus locking, workload, account reviews, AI queues and collection budgets. Public screenshots show fictitious data and do not establish live integration results.
+Tests use temporary SQLite databases and simulated interfaces; they do not call paid APIs or send real Feishu messages. 117 tests cover access control, workflow, data completeness, bonus locking, workload, account reviews, AI queues and collection budgets. Public screenshots show fictitious data and do not establish live integration results.
 
 Source: src/app (pages/actions), src/lib (business/storage/integrations), scripts (demo/worker), tests and docs.
 

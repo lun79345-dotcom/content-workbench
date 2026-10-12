@@ -16,6 +16,7 @@ export function migrate(d: DatabaseSync) {
     add("reviews", "cutter_id_snapshot", "INTEGER");
     add("reviews", "editor_id_snapshot", "INTEGER");
     add("reviews", "recheck_by", "INTEGER");
+    add("reviews", "asset_id_snapshot", "INTEGER");
     add("notifications", "attempts", "INTEGER NOT NULL DEFAULT 0");
     add("notifications", "next_attempt_at", "TEXT");
     add("notifications", "last_error", "TEXT");
@@ -25,6 +26,36 @@ export function migrate(d: DatabaseSync) {
         action TEXT NOT NULL, before_json TEXT, after_json TEXT, reason TEXT,
         created_at TEXT DEFAULT (datetime('now','+8 hours'))
       );
+      CREATE TABLE IF NOT EXISTS video_assets (
+        id INTEGER PRIMARY KEY, video_id INTEGER NOT NULL REFERENCES videos(id),
+        kind TEXT NOT NULL CHECK(kind IN ('script','material','cut')),
+        version INTEGER NOT NULL, url TEXT NOT NULL, note TEXT,
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now','+8 hours')),
+        UNIQUE(video_id,kind,version)
+      );
+      CREATE TABLE IF NOT EXISTS benchmark_runs (
+        id INTEGER PRIMARY KEY, sec_user_id TEXT NOT NULL, nickname TEXT, input_url TEXT NOT NULL,
+        requested_by INTEGER NOT NULL REFERENCES users(id), status TEXT NOT NULL,
+        cutoff TEXT NOT NULL, truncated INTEGER NOT NULL DEFAULT 0, error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','+8 hours'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS benchmark_running ON benchmark_runs(sec_user_id) WHERE status='running';
+      CREATE TABLE IF NOT EXISTS benchmark_videos (
+        id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES benchmark_runs(id), aweme_id TEXT NOT NULL,
+        caption TEXT NOT NULL, published_at TEXT NOT NULL, duration INTEGER,
+        plays INTEGER, likes INTEGER, comments INTEGER, collects INTEGER, shares INTEGER,
+        UNIQUE(run_id,aweme_id)
+      );
+      CREATE TABLE IF NOT EXISTS ai_jobs (
+        id INTEGER PRIMARY KEY, kind TEXT NOT NULL, source_key TEXT NOT NULL,
+        requested_by INTEGER NOT NULL REFERENCES users(id), input_json TEXT NOT NULL, input_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued', report_json TEXT, transcript TEXT, error TEXT,
+        lease_id TEXT, lease_until TEXT, requested_at TEXT NOT NULL DEFAULT (datetime('now','+8 hours')),
+        started_at TEXT, completed_at TEXT
+      );
+      DROP INDEX IF EXISTS ai_job_pending;
+      CREATE UNIQUE INDEX ai_job_pending ON ai_jobs(kind,source_key) WHERE status IN ('queued','transcribing','ready','running');
       CREATE TABLE IF NOT EXISTS work_deliveries (
         id INTEGER PRIMARY KEY, video_id INTEGER NOT NULL UNIQUE REFERENCES videos(id),
         cutter_id INTEGER NOT NULL REFERENCES users(id), editor_id INTEGER,

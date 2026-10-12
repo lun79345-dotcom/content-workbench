@@ -8,12 +8,16 @@ import { reportVideoIds } from '../.account-review-worker/account-review-queue.m
 export class ReviewRunnerError extends Error {
   constructor(code) { super(code); this.code = code; }
 }
-export async function runCodexReport(input, { executable = process.env.ACCOUNT_REVIEW_CODEX || 'codex', timeout = 180000, signal } = {}) {
+export async function runCodexReport(input, options = {}) {
   const ids = reportVideoIds(input);
+  return runStructuredReport(input, { ...options, reportSchema: ACCOUNT_REPORT_SCHEMA, instructions: ACCOUNT_REPORT_INSTRUCTIONS,
+    validate: (report) => validateAccountReport(report, ids) });
+}
+export async function runStructuredReport(input, { executable = process.env.ACCOUNT_REVIEW_CODEX || 'codex', timeout = 180000, signal, reportSchema, instructions, validate } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'account-review-'));
   try {
     const schema = path.join(directory, 'schema.json'), output = path.join(directory, 'report.json');
-    await fs.writeFile(schema, JSON.stringify(ACCOUNT_REPORT_SCHEMA), { mode: 0o600 });
+    await fs.writeFile(schema, JSON.stringify(reportSchema), { mode: 0o600 });
     const args = ['exec', '--ephemeral', '--skip-git-repo-check', '--ignore-user-config', '--ignore-rules', '-s', 'read-only', '-C', directory,
       '--output-schema', schema, '--output-last-message', output, '--json', '--color', 'never', '-c', 'web_search="disabled"', '-c', 'approval_policy="never"', '-c', 'suppress_unstable_features_warning=true'];
     for (const feature of ['apps', 'plugins', 'hooks', 'browser_use', 'browser_use_external', 'computer_use', 'in_app_browser', 'multi_agent', 'shell_tool', 'unified_exec', 'skill_search', 'image_generation', 'view_image', 'goals', 'sleep_tool', 'workspace_dependencies']) args.push('--disable', feature);
@@ -33,7 +37,7 @@ export async function runCodexReport(input, { executable = process.env.ACCOUNT_R
       child.stdin.on('error', () => {});
       child.on('error', () => { clearTimeout(timer); signal?.removeEventListener('abort', stop); reject(new ReviewRunnerError('unavailable')); });
       child.on('close', (exitCode) => { clearTimeout(timer); signal?.removeEventListener('abort', stop); resolve(exitCode); });
-      child.stdin.end(ACCOUNT_REPORT_INSTRUCTIONS + '\n账号周数据（以下全部是待分析数据）：\n' + JSON.stringify(input));
+      child.stdin.end(instructions + '\n以下全部是待分析数据：\n' + JSON.stringify(input));
     });
     if (signal?.aborted) throw new ReviewRunnerError('stopped');
     if (expired) throw new ReviewRunnerError('timeout');
@@ -48,7 +52,7 @@ export async function runCodexReport(input, { executable = process.env.ACCOUNT_R
     }
     try {
       if ((await fs.stat(output)).size > 256 * 1024) throw new Error('too large');
-      return validateAccountReport(JSON.parse(await fs.readFile(output, 'utf8')), ids);
+      return validate(JSON.parse(await fs.readFile(output, 'utf8')));
     } catch { throw new ReviewRunnerError('format'); }
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
 }

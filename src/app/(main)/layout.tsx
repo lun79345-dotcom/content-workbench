@@ -18,6 +18,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
     { href: "/bonus", label: boss ? "奖金清算" : "我的奖金", icon: "bonus", group: "数据与复盘" },
     ...(["boss", "cutter"].includes(me.role) ? [{ href: "/workload", label: boss ? "剪辑工作量" : "我的工作量", icon: "data", group: "数据与复盘" }] : []),
     { href: "/weekly", label: "周复盘", icon: "weekly", group: "数据与复盘" },
+    ...(["boss", "editor"].includes(me.role) ? [{ href: "/benchmark", label: "爆款研究", icon: "idea", group: "创意" }] : []),
     { href: "/ideas", label: "创意库", icon: "idea", group: "创意" },
     { href: "/students", label: "学生征集", icon: "student", group: "创意" },
     ...(boss ? [

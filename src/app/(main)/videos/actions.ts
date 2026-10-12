@@ -8,6 +8,7 @@ import { notify } from "@/lib/notify";
 import { getVideo, leaderId, scriptReviewer, bossId } from "@/lib/queries";
 import { STAGES, REJECT_REASONS, DUE_LABEL, recalcVideoBonus, freezeBonusBasis, getRules, today, diffDays, isFrozen, type Stage, type VideoRow } from "@/lib/rules";
 import { canAdvanceVideo, canManageVideo, canRecheck } from "@/lib/permissions";
+import { ASSET_LABELS, assetKindsFor, latestAsset, type AssetKind } from "@/lib/video-assets";
 import { recordDelivery } from "@/lib/workload";
 import { usablePerson } from "@/lib/admin";
 import { parsePublicationText, PUBLICATION_PLATFORMS, PUBLICATION_LABELS } from "@/lib/publication-input";
@@ -163,6 +164,7 @@ export async function advance(fd: FormData) {
       const reviewer = scriptReviewer(v.editor_id);
       if (!reviewer) throw new UserFacingError("请先配置有效审核人");
       run("INSERT INTO reviews(video_id,node,submitter_id,reviewer_id,cutter_id_snapshot,editor_id_snapshot) VALUES(?,'脚本审核',?,?,?,?)", id, me.id, reviewer, v.cutter_id, v.editor_id);
+      run("UPDATE reviews SET asset_id_snapshot=? WHERE video_id=? AND status='待审'", latestAsset(id, "script"), id);
       moveStage(v, "脚本审核", me.id); return { uid: reviewer, text: `待你审脚本：${v.code}《${v.title}》（4小时内）` };
     }
     if (v.stage === "拍摄") {
@@ -175,6 +177,7 @@ export async function advance(fd: FormData) {
       if (!reviewer) throw new UserFacingError("请先配置有效审核人");
       recordDelivery(v);
       run("INSERT INTO reviews(video_id,node,submitter_id,reviewer_id,cutter_id_snapshot,editor_id_snapshot) VALUES(?,'成片审核',?,?,?,?)", id, me.id, reviewer, v.cutter_id, v.editor_id);
+      run("UPDATE reviews SET asset_id_snapshot=? WHERE video_id=? AND status='待审'", latestAsset(id, "cut"), id);
       moveStage(v, "成片审核", me.id); return { uid: reviewer, text: `待你审成片：${v.code}《${v.title}》` };
     }
     throw new UserFacingError("当前阶段不能继续推进");
@@ -311,6 +314,24 @@ export async function decideWorkload(fd: FormData) {
 }
 
 export async function createVideoForm(fd: FormData) { return actionResult(() => createVideo(fd)); }
+
+export async function saveVideoAsset(fd: FormData) {
+  const me = await requireUser(), id = parseId(fd);
+  const kind = choice(s(fd, "kind"), Object.keys(ASSET_LABELS) as AssetKind[], "交付类型");
+  const link = url(s(fd, "url", true, 2048))!, note = s(fd, "note", false, 1000);
+  const parsed = new URL(link);
+  if (parsed.username || parsed.password) throw new UserFacingError("链接不能包含账号密码");
+  transaction(() => {
+    const v = editable(id); currentRevision(fd, v);
+    if (!assetKindsFor(me, v).includes(kind)) throw new UserFacingError("当前阶段或负责人无此交付权限；审核中的版本请先回退后修改");
+    const version = get<{ n: number }>("SELECT COALESCE(max(version),0)+1 n FROM video_assets WHERE video_id=? AND kind=?", id, kind)!.n;
+    run("INSERT INTO video_assets(video_id,kind,version,url,note,created_by) VALUES(?,?,?,?,?,?)", id, kind, version, parsed.href, note, me.id);
+    run("UPDATE videos SET revision=revision+1 WHERE id=?", id);
+    audit(me.id, "video", id, `新增${ASSET_LABELS[kind]}版本`, null, { version, url: parsed.href, note });
+  });
+  refresh(id);
+}
+export async function saveVideoAssetForm(fd: FormData) { return actionResult(() => saveVideoAsset(fd)); }
 
 export async function updateVideoForm(fd: FormData) { return actionResult(() => updateVideo(fd)); }
 
