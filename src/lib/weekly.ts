@@ -1,9 +1,10 @@
+import { cutterRange } from "./workload";
 import { all, get } from "./db";
 import { weekRange } from "./rules";
 
 export type EditorWeek = { produced: number; persona: number; drama: number; distRate: number | null; reserve: number; ideas: number;
   best: { title: string; plays: number } | null; worst: { title: string; plays: number } | null };
-export type CutterWeek = { delivered: number; onTimeRate: number | null; rework: number; reworkReason: string | null; ideas: number };
+export type CutterWeek = { delivered: number; onTimeRate: number | null; rework: number; reworkReason: string | null; ideas: number; units: number; baseUnits: number; extraUnits: number; eligible: number; missingDue: number; exempt: number };
 
 export function editorWeek(uid: number, week: string): EditorWeek {
   const [s, e] = weekRange(week);
@@ -11,14 +12,14 @@ export function editorWeek(uid: number, week: string): EditorWeek {
     SELECT v.id, v.title, a.kind, v.douyin_url, v.wechat_url,
       (SELECT sum(plays) FROM metrics m WHERE m.video_id=v.id AND m.platform IN ('douyin','wechat') AND m.checkpoint='d7') plays
     FROM videos v JOIN accounts a ON a.id=v.account_id
-    WHERE v.editor_id=? AND v.stage='已发布' AND v.published_at BETWEEN ? AND ?`, uid, s, e);
+    WHERE v.editor_id=? AND v.published_at BETWEEN ? AND ?`, uid, s, e);
   const withPlays = pub.filter((p) => p.plays != null).sort((a, b) => b.plays! - a.plays!);
   return {
     produced: pub.length,
     persona: pub.filter((p) => p.kind === "人设号").length,
     drama: pub.filter((p) => p.kind === "剧情号").length,
     distRate: pub.length ? pub.filter((p) => p.douyin_url && p.wechat_url).length / pub.length : null,
-    reserve: get<{ n: number }>("SELECT count(*) n FROM videos WHERE editor_id=? AND stage IN ('拍摄','剪辑','成片审核','待发布')", uid)!.n,
+    reserve: get<{ n: number }>("SELECT count(*) n FROM videos WHERE editor_id=? AND archived_at IS NULL AND stage IN ('拍摄','剪辑','成片审核','待发布')", uid)!.n,
     ideas: get<{ n: number }>("SELECT count(*) n FROM ideas WHERE submitter_id=? AND date(created_at) BETWEEN ? AND ?", uid, s, e)!.n,
     best: withPlays[0] ? { title: withPlays[0].title, plays: withPlays[0].plays! } : null,
     worst: withPlays.length > 1 ? { title: withPlays.at(-1)!.title, plays: withPlays.at(-1)!.plays! } : null,
@@ -27,20 +28,5 @@ export function editorWeek(uid: number, week: string): EditorWeek {
 
 export function cutterWeek(uid: number, week: string): CutterWeek {
   const [s, e] = weekRange(week);
-  // 本周首次提交成片的视频
-  const firsts = all<{ video_id: number; first: string; due_rough: string | null }>(`
-    SELECT r.video_id, min(r.submitted_at) first, v.due_rough FROM reviews r JOIN videos v ON v.id=r.video_id
-    WHERE r.node='成片审核' AND r.submitter_id=? GROUP BY r.video_id HAVING date(first) BETWEEN ? AND ?`, uid, s, e);
-  const onTime = firsts.filter((f) => f.due_rough && f.first.slice(0, 10) <= f.due_rough).length;
-  const rejects = all<{ reason: string; n: number }>(`
-    SELECT r.reason, count(*) n FROM reviews r JOIN videos v ON v.id=r.video_id
-    WHERE r.node='成片审核' AND r.status='打回' AND v.cutter_id=? AND r.reason LIKE '剪辑%' AND date(r.done_at) BETWEEN ? AND ?
-    GROUP BY r.reason ORDER BY n DESC`, uid, s, e);
-  return {
-    delivered: firsts.length,
-    onTimeRate: firsts.length ? onTime / firsts.length : null,
-    rework: rejects.reduce((a, r) => a + r.n, 0),
-    reworkReason: rejects[0]?.reason.replace("剪辑责任-", "") ?? null,
-    ideas: get<{ n: number }>("SELECT count(*) n FROM ideas WHERE submitter_id=? AND date(created_at) BETWEEN ? AND ?", uid, s, e)!.n,
-  };
+  return cutterRange(uid, s, e);
 }

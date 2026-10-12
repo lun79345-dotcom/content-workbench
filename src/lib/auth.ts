@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import crypto from "node:crypto";
-import { get } from "./db";
+import { makeSession, readSession, SESSION_AGE } from "./session";
+import { get, run } from "./db";
 import { BASE_PATH } from "./paths";
 
-export type User = { id: number; name: string; role: "boss" | "editor" | "cutter" | "pending" | "disabled"; avatar: string | null; feishu_open_id: string | null };
+export type User = { id: number; name: string; role: "boss" | "editor" | "cutter" | "pending" | "disabled"; avatar: string | null; feishu_open_id: string | null; session_version: number };
 
 export const SESSION_COOKIE = "yy_sid";
 const COOKIE = SESSION_COOKIE;
@@ -15,34 +15,31 @@ function secret() {
   if (!s && process.env.NODE_ENV === "production") throw new Error("缺少 SESSION_SECRET");
   return s || "dev-secret";
 }
-function sign(v: string) {
-  return crypto.createHmac("sha256", secret()).update(v).digest("base64url");
-}
-
 export async function setSession(userId: number) {
-  const v = `${userId}.${Date.now()}`;
-  (await cookies()).set(COOKIE, `${v}.${sign(v)}`, { httpOnly: true, sameSite: "lax", secure: process.env.COOKIE_SECURE === "1", path: COOKIE_PATH, maxAge: 60 * 60 * 24 * 30 });
+  const user = get<User>("SELECT * FROM users WHERE id=?", userId);
+  if (!user) throw new Error("成员不存在");
+  const secure = process.env.COOKIE_SECURE === "1" || (process.env.COOKIE_SECURE !== "0" && process.env.NODE_ENV === "production");
+  (await cookies()).set(COOKIE, makeSession(userId, user.session_version, secret()), { httpOnly: true, sameSite: "lax", secure, path: COOKIE_PATH, maxAge: SESSION_AGE / 1000 });
 }
 export async function clearSession() {
+  const u = await currentUser();
+  if (u) run("UPDATE users SET session_version=session_version+1 WHERE id=?", u.id);
   (await cookies()).set(COOKIE, "", { path: COOKIE_PATH, maxAge: 0 });
 }
-
 export async function currentUser(): Promise<User | null> {
   const raw = (await cookies()).get(COOKIE)?.value;
   if (!raw) return null;
-  const i = raw.lastIndexOf(".");
-  const v = raw.slice(0, i);
-  const sig = raw.slice(i + 1);
-  const expect = sign(v);
-  if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
-  return get<User>("SELECT * FROM users WHERE id=?", Number(v.split(".")[0])) ?? null;
+  const session = readSession(raw, secret());
+  if (!session) return null;
+  const user = get<User>("SELECT * FROM users WHERE id=?", session.uid);
+  return user && user.session_version === session.version ? user : null;
 }
 
 /** 页面/动作入口：未登录跳登录页；待审批用户只能看到等待页 */
 export async function requireUser(): Promise<User> {
   const u = await currentUser();
   if (!u) redirect("/login");
-  if (u.role === "pending" || u.role === "disabled") redirect("/login?pending=1");
+  if (!["boss", "editor", "cutter"].includes(u.role)) redirect("/login?pending=1");
   return u;
 }
 export async function requireBoss(): Promise<User> {

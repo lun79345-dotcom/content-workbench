@@ -1,10 +1,13 @@
+import { ActionForm } from "@/components/action-form";
 import Link from "next/link";
 import { Submit } from "@/components/submit";
 import { requireUser } from "@/lib/auth";
 import { all } from "@/lib/db";
 import { PageHeader, Section, Tabs, Tag, Empty } from "@/components/ui";
 import { ReviewDecision } from "@/components/review";
-import { setRecheck } from "../videos/actions";
+import { canRecheck } from "@/lib/permissions";
+import { leaderId } from "@/lib/queries";
+import { setRecheckForm as setRecheck } from "../videos/actions";
 
 type R = { id: number; node: string; status: string; reason: string | null; comment: string | null; recheck: string | null; submitted_at: string; done_at: string | null;
   video_id: number; code: string; title: string; submitter: string; reviewer: string; reviewer_id: number };
@@ -20,7 +23,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <PageHeader title="内容审核" desc="脚本审核：轮值组长审，4小时内；成片审核：编导自审 + 组长复核。打回必须归类，归类决定扣谁的分。" />
+      <PageHeader title="内容审核" desc="脚本审核：轮值组长审，4小时内；成片审核：编导自审 + 组长复核。打回必须归类，归类决定返工责任统计，复核可确认归类或免责。" />
       <Tabs current={tab} items={[{ key: "todo", label: `待审（${todo.length}）`, href: "/reviews" }, { key: "all", label: "审核记录", href: "/reviews?tab=all" }]} />
       {tab === "todo" ? (
         todo.length === 0 ? <Empty>没有待审的内容</Empty> : (
@@ -54,12 +57,12 @@ export default async function ReviewsPage({ searchParams }: { searchParams: Prom
                     <td className="whitespace-nowrap text-red-600">{r.reason}</td>
                     <td className="min-w-48 text-stone-600">{r.comment}</td>
                     <td>
-                      {r.node === "成片审核" && me.role !== "cutter" ? (
-                        <form action={setRecheck} className="flex gap-1">
+                      {r.node === "成片审核" && r.status === "打回" && canRecheck(me, leaderId()) ? (
+                        <ActionForm action={setRecheck} className="flex gap-1">
                           <input type="hidden" name="review_id" value={r.id} />
-                          <select name="recheck" defaultValue={r.recheck ?? ""} className="input h-7 w-20 text-xs"><option value="">—</option><option>通过</option><option>有问题</option></select>
+                          <select name="recheck" defaultValue={r.recheck ?? ""} className="input h-7 w-20 text-xs"><option value="">—</option><option>确认归类</option><option>免责</option></select>
                           <Submit done="已存" className="btn btn-sm">存</Submit>
-                        </form>
+                        </ActionForm>
                       ) : r.recheck}
                     </td>
                   </tr>

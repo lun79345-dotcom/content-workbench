@@ -1,6 +1,7 @@
 import type { DatabaseSync as DB } from "node:sqlite";
 import path from "node:path";
 import fs from "node:fs";
+import { migrate } from "./migrations";
 
 // 通过 getBuiltinModule 加载，避免打包器处理 node:sqlite
 const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
@@ -14,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL,              -- boss | editor | cutter | pending | disabled
   feishu_open_id TEXT UNIQUE,
   avatar TEXT,
-  created_at TEXT DEFAULT (datetime('now','localtime'))
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS accounts (
   id INTEGER PRIMARY KEY,
@@ -44,14 +45,14 @@ CREATE TABLE IF NOT EXISTS videos (
   note TEXT,
   analysis TEXT,                   -- 数据复盘分析
   created_by INTEGER,
-  created_at TEXT DEFAULT (datetime('now','localtime'))
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS stage_log (
   id INTEGER PRIMARY KEY,
   video_id INTEGER NOT NULL,
   from_stage TEXT, to_stage TEXT,
   user_id INTEGER,
-  at TEXT DEFAULT (datetime('now','localtime'))
+  at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS reviews (
   id INTEGER PRIMARY KEY,
@@ -62,7 +63,7 @@ CREATE TABLE IF NOT EXISTS reviews (
   reason TEXT,                     -- 打回原因归类，如 剪辑责任-错别字
   comment TEXT,
   recheck TEXT,                    -- 复审结果
-  submitted_at TEXT DEFAULT (datetime('now','localtime')),
+  submitted_at TEXT DEFAULT (datetime('now','+8 hours')),
   done_at TEXT
 );
 CREATE TABLE IF NOT EXISTS metrics (
@@ -74,7 +75,7 @@ CREATE TABLE IF NOT EXISTS metrics (
   source TEXT,                     -- manual | tikhub | douyin_open
   screenshot TEXT,
   updated_by INTEGER,
-  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','+8 hours')),
   UNIQUE(video_id, checkpoint, platform)
 );
 CREATE TABLE IF NOT EXISTS bonuses (
@@ -87,7 +88,7 @@ CREATE TABLE IF NOT EXISTS bonuses (
   video_id INTEGER,
   auto INTEGER DEFAULT 0,          -- 1=系统自动计算
   published INTEGER DEFAULT 0,     -- 已公示/已确认
-  created_at TEXT DEFAULT (datetime('now','localtime'))
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS targets (
   month TEXT NOT NULL, account_id INTEGER NOT NULL, target_plays INTEGER,
@@ -104,7 +105,7 @@ CREATE TABLE IF NOT EXISTS ideas (
   status TEXT DEFAULT '待评',       -- 待评/入库/已排期/已拍/已弃
   video_id INTEGER,
   note TEXT,
-  created_at TEXT DEFAULT (datetime('now','localtime'))
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS students (
   id INTEGER PRIMARY KEY,
@@ -115,7 +116,7 @@ CREATE TABLE IF NOT EXISTS students (
   result TEXT DEFAULT '待评',       -- 待评/入围/采用/未入选
   bonus_kind TEXT, bonus_amount REAL, paid_at TEXT,
   idea_id INTEGER, note TEXT,
-  created_at TEXT DEFAULT (datetime('now','localtime'))
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS weekly (
   id INTEGER PRIMARY KEY,
@@ -123,7 +124,7 @@ CREATE TABLE IF NOT EXISTS weekly (
   user_id INTEGER NOT NULL,
   best TEXT, best_why TEXT, worst TEXT, worst_why TEXT,
   insight TEXT, self_score INTEGER, blockers TEXT, next_plan TEXT,
-  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','+8 hours')),
   UNIQUE(week, user_id)
 );
 CREATE TABLE IF NOT EXISTS notifications (
@@ -133,7 +134,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   dedupe TEXT UNIQUE,
   read INTEGER DEFAULT 0,
   pushed INTEGER DEFAULT 0,
-  created_at TEXT DEFAULT (datetime('now','localtime'))
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 `;
@@ -144,8 +145,9 @@ export function db(): DB {
   if (_db) return _db;
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const d = new DatabaseSync(path.join(DATA_DIR, "app.db"));
-  d.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+  d.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
   d.exec(SCHEMA);
+  migrate(d);
   _db = d;
   seedIfEmpty(d);
   return d;
@@ -184,4 +186,16 @@ function seedIfEmpty(d: DB) {
   acc.run("剧情号⑤", "剧情号", "2026-10-01", ids["编导B"], 5);
   acc.run("剧情号⑥", "剧情号", "2026-10-01", ids["编导C"], 6);
   d.prepare("INSERT INTO settings(key, value) VALUES('leader_id', ?)").run(String(ids["编导A"]));
+}
+
+export function transaction<T>(fn: () => T): T {
+  const d = db();
+  if (d.isTransaction) return fn();
+  d.exec("BEGIN IMMEDIATE");
+  try { const result = fn(); d.exec("COMMIT"); return result; }
+  catch (e) { d.exec("ROLLBACK"); throw e; }
+}
+export function audit(actorId: number, entity: string, entityId: number | null, action: string, before: unknown, after: unknown, reason?: string | null) {
+  run("INSERT INTO audit_log(actor_id,entity,entity_id,action,before_json,after_json,reason) VALUES(?,?,?,?,?,?,?)",
+    actorId, entity, entityId, action, before == null ? null : JSON.stringify(before), after == null ? null : JSON.stringify(after), reason ?? null);
 }

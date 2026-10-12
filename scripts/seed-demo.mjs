@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import ts from 'typescript';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -10,10 +11,14 @@ mkdirSync(dir, { recursive: true });
 const db = new DatabaseSync(resolve(dir, 'app.db'));
 db.exec('PRAGMA foreign_keys=ON;');
 db.exec(schema);
-for (const table of ['users', 'accounts', 'videos', 'ideas', 'students', 'metrics', 'bonuses', 'reviews', 'weekly', 'settings', 'notifications', 'targets', 'stage_log']) {
+const migrationSource = readFileSync(new URL('../src/lib/migrations.ts', import.meta.url), 'utf8');
+const migrationCode = ts.transpileModule(migrationSource, { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { migrate } = await import('data:text/javascript;base64,' + Buffer.from(migrationCode).toString('base64'));
+migrate(db);
+for (const table of ['users', 'accounts', 'videos', 'ideas', 'students', 'metrics', 'bonuses', 'reviews', 'weekly', 'settings', 'notifications', 'targets', 'stage_log', 'account_weekly', 'account_review_jobs', 'metric_snapshots', 'tikhub_requests', 'tikhub_attempts']) {
   if (db.prepare(`SELECT count(*) n FROM ${table}`).get().n) throw new Error('Refusing to overwrite an existing database. Use a separate empty DATA_DIR.');
 }
-const date = (n) => { const d = new Date(); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const date = (n) => { const d = new Date(Date.now() + 8 * 60 * 60 * 1000); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 db.exec('BEGIN');
 try {
   const people = [['老板演示', 'boss'], ['编导演示 A', 'editor'], ['编导演示 B', 'editor'], ['剪辑演示 A', 'cutter'], ['剪辑演示 B', 'cutter']];
@@ -31,6 +36,12 @@ try {
   db.prepare('INSERT INTO targets(month,account_id,target_plays) VALUES(?,?,?)').run(date(0).slice(0,7),1,100000);
   db.prepare("INSERT INTO ideas(code,submitter_id,source,content,grade,status) VALUES('I001',2,'内部拆解','虚构创意：用日常场景解释一个小知识','A','入库')").run();
   db.prepare('INSERT INTO weekly(week,user_id,insight,next_plan) VALUES(?,?,?,?)').run('2026-W41',2,'演示复盘：先确认受众和一个明确主题。','演示计划：尝试两种开场并记录反馈。');
+  for (const [id, age, title, views] of [[9,7,'示例：每日播放量核对',239800],[10,10,'示例：账号周复盘样本',52000]]) {
+    const url = `https://example.invalid/demo/${id}`;
+    db.prepare('INSERT INTO videos(id,code,title,account_id,editor_id,cutter_id,content_type,stage,published_at,douyin_url,brief,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,`V${String(id).padStart(3,'0')}`,title,1,2,4,'口播','已发布',date(-age),url,'全部数字与链接为虚构演示；非真实平台采集。',1);
+    for (const [day, plays] of [[date(-1),views-12000],[date(0),views]]) db.prepare('INSERT INTO metric_snapshots(video_id,platform,collected_date,collected_at,published_at,publication_url,plays,likes,comments,collects,shares,source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,'douyin',day,day+' 10:00:00',date(-age),url,plays,200,30,50,20,'demo');
+    if (age>7) db.prepare("INSERT INTO metrics(video_id,checkpoint,platform,plays,source) VALUES(?,'d7','douyin',?,'manual')").run(id,views);
+  }
   db.exec('COMMIT');
 } catch (error) { db.exec('ROLLBACK'); throw error; }
 db.close();

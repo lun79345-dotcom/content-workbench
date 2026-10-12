@@ -1,10 +1,11 @@
+import { ActionForm } from "@/components/action-form";
 import Link from "next/link";
 import { Submit } from "@/components/submit";
 import { requireUser } from "@/lib/auth";
-import { accountMonthly, bonusByVideo, dataRows, recentMonths } from "@/lib/stats";
+import { accountMonthly, bonusByVideo, dataRows, recentMonths, dataCheckpoint } from "@/lib/stats";
 import { fmtNum, getRules, isNewAccountAt, monthOf, shortDate, tierIndex, tierLabel, today } from "@/lib/rules";
 import { PageHeader, Tabs, Tag } from "@/components/ui";
-import { saveTarget } from "./actions";
+import { saveTargetForm as saveTarget } from "./actions";
 
 export default async function DataPage({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const me = await requireUser();
@@ -29,7 +30,7 @@ export default async function DataPage({ searchParams }: { searchParams: Promise
 }
 
 function VideoTable({ month }: { month: string }) {
-  const r = getRules();
+  const currentRules = getRules();
   const rows = dataRows(month);
   const bonus = bonusByVideo();
   if (!rows.length) return <div className="card p-8 text-center text-sm text-stone-400">{month} 还没有已发布的视频</div>;
@@ -43,11 +44,13 @@ function VideoTable({ month }: { month: string }) {
         </tr></thead>
         <tbody>
           {rows.map((x) => {
-            const isNew = isNewAccountAt(x.new_since, x.published_at, r);
-            const has7 = x.dy7 != null && x.wx7 != null;
-            const has30 = x.dy30 != null && x.wx30 != null;
-            const i7 = has7 ? tierIndex(x.dy7! + x.wx7!, isNew, r) : -1;
-            const i30 = has30 ? tierIndex(x.dy30! + x.wx30!, isNew, r) : -1;
+            const basis = x.bonus_snapshot ? JSON.parse(x.bonus_snapshot) : null;
+            const r = basis?.rules ?? currentRules;
+            const isNew = isNewAccountAt(basis ? basis.new_since : x.new_since, x.published_at, r);
+            const c7 = dataCheckpoint(x, "d7"), c30 = dataCheckpoint(x, "d30");
+            const has7 = c7.complete, has30 = c30.complete;
+            const i7 = has7 ? tierIndex(c7.total, isNew, r) : -1;
+            const i30 = has30 ? tierIndex(c30.total, isNew, r) : -1;
             const b = bonus.get(x.id);
             return (
               <tr key={x.id}>
@@ -56,12 +59,12 @@ function VideoTable({ month }: { month: string }) {
                 <td className="whitespace-nowrap">{x.account_name}{isNew && <Tag tone="purple">新</Tag>}</td>
                 <td className="min-w-48">{x.title}</td>
                 <td className="whitespace-nowrap text-stone-600">{x.editor_name} / {x.cutter_name ?? "—"}</td>
-                <td className="tabular-nums">{(r.cut_levels[x.cut_level] ?? 1) + (x.extra_units ?? 0)}<span className="text-xs text-stone-400"> {x.cut_level}</span></td>
+                <td className="tabular-nums">{x.work_units ?? "未计件"}<span className="text-xs text-stone-400"> {x.cut_level}</span></td>
                 <td className="text-right tabular-nums">{fmtNum(x.wx7)}</td>
                 <td className="text-right tabular-nums">{fmtNum(x.dy7)}</td>
-                <td className="text-right font-medium tabular-nums">{has7 ? fmtNum(x.dy7! + x.wx7!) : "—"}</td>
+                <td className="text-right font-medium tabular-nums">{has7 ? fmtNum(c7.total) : "—"}</td>
                 <td className="text-right tabular-nums">{fmtNum(x.fans7)}</td>
-                <td>{has7 ? <Tag tone={i7 >= 0 ? "green" : "gray"}>{tierLabel(i7, isNew, r)}</Tag> : <Tag tone="amber">待登记</Tag>}</td>
+                <td>{has7 ? <Tag tone={i7 >= 0 ? "green" : "gray"}>{tierLabel(i7, isNew, r)}</Tag> : c7.applicable ? <Tag tone="amber">待登记</Tag> : <Tag>不适用</Tag>}</td>
                 <td className="text-right tabular-nums">{b?.hit ? `¥${b.hit}` : ""}</td>
                 <td>{has30 ? <Tag tone={i30 > i7 ? "green" : "gray"}>{tierLabel(i30, isNew, r)}</Tag> : ""}</td>
                 <td className="text-right tabular-nums">{b?.diff ? `¥${b.diff}` : ""}</td>
@@ -94,11 +97,11 @@ function AccountTable({ month, canEdit }: { month: string; canEdit: boolean }) {
               <td className="text-right tabular-nums">{x.hits}</td>
               <td>
                 {canEdit ? (
-                  <form action={saveTarget} className="flex gap-1">
+                  <ActionForm action={saveTarget} className="flex gap-1">
                     <input type="hidden" name="month" value={month} /><input type="hidden" name="account_id" value={x.account.id} />
                     <input name="target" defaultValue={x.target ?? ""} placeholder={x.suggestThis ? `建议 ${x.suggestThis}` : "首月只记基线"} className="input h-7 w-32 text-xs" />
                     <Submit done="已存" className="btn btn-sm">存</Submit>
-                  </form>
+                  </ActionForm>
                 ) : fmtNum(x.target)}
               </td>
               <td className={`text-right tabular-nums ${x.rate == null ? "" : x.rate >= 1 ? "text-emerald-600" : "text-red-600"}`}>{x.rate == null ? "—" : `${Math.round(x.rate * 100)}%`}</td>

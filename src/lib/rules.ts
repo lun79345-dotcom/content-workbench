@@ -1,4 +1,5 @@
-import { all, get, run } from "./db";
+import { UserFacingError } from "./action-errors";
+import { all, get, run, transaction } from "./db";
 
 /** 生产流程阶段，顺序即看板列顺序 */
 export const STAGES = ["选题", "脚本", "脚本审核", "拍摄", "剪辑", "成片审核", "待发布", "已发布"] as const;
@@ -37,17 +38,18 @@ export const REJECT_REASONS = [
 
 export const IDEA_SOURCES = ["内部拆解", "评论区挖矿", "学生悬赏", "平台付费", "UGC征集", "对标监控"];
 export const IDEA_STATUS = ["待评", "入库", "已排期", "已拍", "已弃"];
+export const IDEA_KINDS = ["选题", "钩子", "梗/台词", "形式", "BGM/包装"];
 export const BONUS_KINDS = ["爆款奖", "升档补差", "抖音单项奖", "小红书奖", "创意采用奖", "学生悬赏", "其他"];
 
-/** 可配置的虚构演示规则，不代表任何公司的实际考核、分成或奖金制度 */
+/** 可在「设置」里修改的规则，带默认值 */
 export const DEFAULT_RULES = {
-  tiers: [10000, 30000, 100000],          // 老号爆款档位
-  tier_amounts: [100, 300, 800],            // 对应奖金（元），老板可在设置里改
-  new_discount: 0.8,                         // 新号前 N 月档位折扣
+  tiers: [100000, 500000, 1000000],          // 老号爆款档位
+  tier_amounts: [200, 500, 1000],            // 对应奖金（元），老板可在设置里改
+  new_discount: 0.7,                         // 新号前 N 月档位折扣
   new_months: 2,
-  editor_share: 0.5,                         // 爆款奖编导分成比例，其余归剪辑
+  editor_share: 0.6,                         // 爆款奖编导分成比例，其余归剪辑
   cut_levels: { 简单: 0.5, 常规: 1, 精剪: 1.5 } as Record<string, number>,
-  target_growth: 1.1,
+  target_growth: 1.3,
   freeze_hours: 24,
   script_review_hours: 4,
 };
@@ -78,7 +80,11 @@ export function addDays(date: string, n: number): string {
 }
 export function addMonths(date: string, n: number): string {
   const d = new Date(date + "T00:00:00Z");
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
   d.setUTCMonth(d.getUTCMonth() + n);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, last));
   return d.toISOString().slice(0, 10);
 }
 export function diffDays(a: string, b: string) {
@@ -119,6 +125,8 @@ export type VideoRow = {
   publish_date: string | null; published_at: string | null; cut_level: string; extra_units: number;
   content_type: string | null; douyin_url: string | null; wechat_url: string | null; xhs_url: string | null;
   brief: string | null; note: string | null; analysis: string | null; idea_id: number | null;
+  archived_at?: string | null; late_exempt_reason?: string | null; bonus_snapshot?: string | null;
+  revision: number;
   account_name?: string; editor_name?: string; cutter_name?: string; account_new_since?: string | null;
 };
 
@@ -138,6 +146,10 @@ export function isFrozen(v: VideoRow, t = today()) {
 
 /** 当前阶段谁该动手 */
 export function stageOwner(v: VideoRow, leaderId: number | null): number | null {
+  if (v.stage === "脚本审核" || v.stage === "成片审核") {
+    const pending = get<{ reviewer_id: number }>("SELECT reviewer_id FROM reviews WHERE video_id=? AND status='待审' ORDER BY id DESC LIMIT 1", v.id);
+    if (pending) return pending.reviewer_id;
+  }
   switch (v.stage) {
     case "选题": case "脚本": case "拍摄": return v.editor_id;
     case "脚本审核": return leaderId;
@@ -150,7 +162,7 @@ export function stageOwner(v: VideoRow, leaderId: number | null): number | null 
 
 // ---------- 爆款定档 ----------
 export function isNewAccountAt(newSince: string | null | undefined, publishDate: string, r = getRules()) {
-  return !!newSince && publishDate < addMonths(newSince, r.new_months);
+  return !!newSince && publishDate >= newSince && publishDate < addMonths(newSince, r.new_months);
 }
 export function tierThresholds(isNew: boolean, r = getRules()) {
   return r.tiers.map((t) => Math.round(t * (isNew ? r.new_discount : 1)));
@@ -167,48 +179,90 @@ export function tierLabel(idx: number, isNew: boolean, r = getRules()) {
   return fmtNum(tierThresholds(isNew, r)[idx]) + "+";
 }
 
-/** 视频双平台合计播放（某个节点） */
-export function combinedPlays(videoId: number, checkpoint: "d7" | "d30") {
+export type PlayPlatform = "douyin" | "wechat";
+type PublishedPlatforms = Pick<VideoRow, "douyin_url" | "wechat_url" | "xhs_url">;
+/** Blank links on legacy records retain the old dual-platform requirement. */
+export function playPlatforms(v: PublishedPlatforms): PlayPlatform[] {
+  const selected = (["douyin", "wechat"] as const).filter((p) => v[`${p}_url`]);
+  return selected.length || v.xhs_url ? selected : ["douyin", "wechat"];
+}
+export function playTotals(v: PublishedPlatforms, dy: number | null, wx: number | null, platforms = playPlatforms(v)) {
+  const douyin = platforms.includes("douyin") ? dy : null, wechat = platforms.includes("wechat") ? wx : null;
+  return { douyin, wechat, platforms, applicable: platforms.length > 0,
+    total: (douyin ?? 0) + (wechat ?? 0), complete: platforms.length > 0 && platforms.every((p) => (p === "douyin" ? dy : wx) != null) };
+}
+/** Only actual published platforms contribute; unpublished platforms require no invented zero. */
+export function combinedPlays(videoId: number, checkpoint: "d7" | "d30", platforms?: PlayPlatform[]) {
+  const v = get<VideoRow>("SELECT * FROM videos WHERE id=?", videoId);
+  if (!v) throw new UserFacingError("视频不存在");
   const rows = all<{ platform: string; plays: number | null }>(
     "SELECT platform, plays FROM metrics WHERE video_id=? AND checkpoint=? AND platform IN ('douyin','wechat')", videoId, checkpoint);
   const dy = rows.find((r) => r.platform === "douyin")?.plays ?? null;
   const wx = rows.find((r) => r.platform === "wechat")?.plays ?? null;
-  return { douyin: dy, wechat: wx, total: (dy ?? 0) + (wx ?? 0), complete: dy != null && wx != null };
+  return playTotals(v, dy, wx, platforms);
+}
+export function needsMetrics(videoId: number, checkpoint: "d7" | "d30") {
+  const v = get<VideoRow>("SELECT * FROM videos WHERE id=?", videoId);
+  if (!v) return false;
+  const basis: BonusBasis | null = v.bonus_snapshot ? JSON.parse(v.bonus_snapshot) : null;
+  const plays = combinedPlays(videoId, checkpoint, bonusPlatforms(basis));
+  const xhs = v.xhs_url && checkpoint === "d7" ? get<{ likes: number | null; collects: number | null }>("SELECT likes,collects FROM metrics WHERE video_id=? AND checkpoint='d7' AND platform='xhs'", videoId) : null;
+  return (plays.applicable && !plays.complete) || !!(v.xhs_url && checkpoint === "d7" && (xhs?.likes == null || xhs?.collects == null));
 }
 
-/**
- * 根据第7天 / 第30天数据，重算该视频的自动奖金（爆款奖 + 升档补差）。
- * 已公示的自动奖金不再改动，避免改账。
- */
-export function recalcVideoBonus(videoId: number) {
-  const r = getRules();
-  const v = get<VideoRow>(`SELECT v.*, a.new_since account_new_since FROM videos v JOIN accounts a ON a.id=v.account_id WHERE v.id=?`, videoId);
-  if (!v || !v.published_at) return;
-  const isNew = isNewAccountAt(v.account_new_since, v.published_at, r);
-  const people: [number | null, number][] = [
-    [v.editor_id, r.editor_share],
-    [v.cutter_id, 1 - r.editor_share],
-  ];
-  const upsert = (kind: string, month: string, total: number, desc: string) => {
-    for (const [uid, share] of people) {
-      if (!uid || share <= 0) continue;
-      const amt = Math.round(total * share);
-      const ex = get<{ id: number; published: number }>("SELECT id, published FROM bonuses WHERE video_id=? AND kind=? AND user_id=? AND auto=1", videoId, kind, uid);
-      if (ex?.published) continue;
-      if (amt <= 0) { if (ex) run("DELETE FROM bonuses WHERE id=?", ex.id); continue; }
-      if (ex) run("UPDATE bonuses SET amount=?, description=?, month=? WHERE id=?", amt, desc, month, ex.id);
-      else run("INSERT INTO bonuses(month,user_id,kind,amount,description,video_id,auto) VALUES(?,?,?,?,?,?,1)", month, uid, kind, amt, desc, videoId);
-    }
-  };
-  const d7 = combinedPlays(videoId, "d7");
-  const i7 = d7.complete ? tierIndex(d7.total, isNew, r) : -1;
-  const a7 = i7 >= 0 ? r.tier_amounts[i7] : 0;
-  upsert("爆款奖", monthOf(addDays(v.published_at, 7)), a7, `${v.code}《${v.title}》7天${fmtNum(d7.total)}，${tierLabel(i7, isNew, r)}${isNew ? "（新号折扣档）" : ""}`);
-
-  const d30 = combinedPlays(videoId, "d30");
-  if (d30.complete) {
-    const i30 = tierIndex(d30.total, isNew, r);
-    const a30 = i30 >= 0 ? r.tier_amounts[i30] : 0;
-    upsert("升档补差", monthOf(addDays(v.published_at, 30)), Math.max(0, a30 - a7), `${v.code} 30天${fmtNum(d30.total)}，${tierLabel(i7, isNew, r)}→${tierLabel(i30, isNew, r)}`);
+export type BonusBasis = { editor_id: number; cutter_id: number | null; new_since: string | null; rules: Rules; platforms?: PlayPlatform[] };
+export function bonusPlatforms(basis: BonusBasis | null): PlayPlatform[] | undefined {
+  // Existing confirmed snapshots were calculated using both platforms before this migration.
+  return basis ? basis.platforms ?? ["douyin", "wechat"] : undefined;
+}
+export function freezeBonusBasis(videoId: number) {
+  const v = get<VideoRow>("SELECT v.*, a.new_since account_new_since FROM videos v LEFT JOIN accounts a ON a.id=v.account_id WHERE v.id=?", videoId);
+  if (v && !v.bonus_snapshot) {
+    const basis: BonusBasis = { editor_id: v.editor_id, cutter_id: v.cutter_id, new_since: v.account_new_since ?? null, rules: getRules(), platforms: playPlatforms(v) };
+    run("UPDATE videos SET bonus_snapshot=? WHERE id=?", JSON.stringify(basis), videoId);
   }
+}
+
+/** Reconcile pending entries against the actual locked ledger, including corrections. */
+export function recalcVideoBonus(videoId: number) {
+  return transaction(() => {
+    let v = get<VideoRow>("SELECT v.*, a.new_since account_new_since FROM videos v LEFT JOIN accounts a ON a.id=v.account_id WHERE v.id=?", videoId);
+    if (!v?.published_at) return;
+    const locked = all<{ user_id: number; kind: string; amount: number }>("SELECT user_id,kind,amount FROM bonuses WHERE video_id=? AND auto=1 AND published=1", videoId);
+    if (locked.length && !v.bonus_snapshot) { freezeBonusBasis(videoId); v = get<VideoRow>("SELECT * FROM videos WHERE id=?", videoId)!; }
+    const basis: BonusBasis = v.bonus_snapshot ? JSON.parse(v.bonus_snapshot) : { editor_id: v.editor_id, cutter_id: v.cutter_id, new_since: v.account_new_since ?? null, rules: getRules() };
+    const r = basis.rules, isNew = isNewAccountAt(basis.new_since, v.published_at!, r);
+    const platforms = bonusPlatforms(v.bonus_snapshot ? basis : null);
+    const d7 = combinedPlays(videoId, "d7", platforms), d30 = combinedPlays(videoId, "d30", platforms);
+    const i7 = d7.complete ? tierIndex(d7.total, isNew, r) : -1;
+    const i30 = d30.complete ? tierIndex(d30.total, isNew, r) : -1;
+    const a7 = i7 < 0 ? 0 : r.tier_amounts[i7], a30 = i30 < 0 ? 0 : r.tier_amounts[i30];
+    const allocation = (amount: number) => {
+      const cents = Math.round(amount * 100), editor = Math.round(cents * r.editor_share);
+      const amounts = new Map<number, number>();
+      for (const [uid, value] of [[basis.editor_id, editor], [basis.cutter_id, cents - editor]] as const) {
+        if (uid) amounts.set(uid, (amounts.get(uid) ?? 0) + value);
+      }
+      return amounts;
+    };
+    const amounts7 = allocation(a7), amounts30 = allocation(a30);
+    // Remove ALL unconfirmed automatic rows first, including former assignees. Locked rows stay immutable.
+    run("DELETE FROM bonuses WHERE video_id=? AND auto=1 AND published=0", videoId);
+    for (const uid of amounts7.keys()) {
+      const paid7 = locked.filter((b) => b.user_id === uid && b.kind === "爆款奖").reduce((s, b) => s + Math.round(b.amount * 100), 0);
+      const paid30 = locked.filter((b) => b.user_id === uid && b.kind === "升档补差").reduce((s, b) => s + Math.round(b.amount * 100), 0);
+      const desired7 = d7.complete ? amounts7.get(uid)! : paid7;
+      const desired30 = d30.complete ? Math.max(0, amounts30.get(uid)! - desired7) : paid30;
+      for (const [kind, delta, day, data, idx] of [
+        ["爆款奖", desired7 - paid7, 7, d7, i7],
+        ["升档补差", desired30 - paid30, 30, d30, i30],
+      ] as const) {
+        if (delta === 0 || !data.complete) continue;
+        const adjusted = locked.length > 0;
+        const month = adjusted ? monthOf(today()) : monthOf(addDays(v.published_at!, day));
+        const description = `${v.code}《${v.title}》${day}天${fmtNum(data.total)}，${tierLabel(idx, isNew, r)}${adjusted ? (delta < 0 ? " · 冲正" : " · 补差调整") : ""}`;
+        run("INSERT INTO bonuses(month,user_id,kind,amount,description,video_id,auto) VALUES(?,?,?,?,?,?,1)", month, uid, kind, delta / 100, description, videoId);
+      }
+    }
+  });
 }

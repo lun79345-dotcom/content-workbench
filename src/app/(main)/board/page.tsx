@@ -28,7 +28,7 @@ export default async function BoardPage({ searchParams }: { searchParams: Promis
       <PageHeader
         title="生产看板"
         desc={<>一条视频一张卡，从选题走到发布。进行中 {videos.filter((v) => v.stage !== "已发布").length} 条{overdue > 0 && <span className="text-red-600">，逾期 {overdue} 条</span>}；已发布只显示近7天。</>}
-        actions={<Link href="/videos/new" className="btn btn-primary"><Plus size={16} />新建选题</Link>}
+        actions={me.role !== "cutter" && <Link href={sp.account ? `/videos/new?account=${encodeURIComponent(sp.account)}` : "/videos/new"} className="btn btn-primary"><Plus size={16} />新建需求单</Link>}
       />
       <div className="mb-5 space-y-2">
         <Chips label="账号" items={[{ href: q("account"), label: "全部", on: !sp.account }, ...accs.map((a) => ({ href: q("account", a.id), label: a.name, on: sp.account == String(a.id) }))]} />

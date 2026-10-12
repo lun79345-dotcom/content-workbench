@@ -40,33 +40,49 @@ export function VideoCard({ v }: { v: VideoRow }) {
   );
 }
 
+export function DemandBrief({ text }: { text: string | null }) {
+  if (!text) return <>需求说明暂未填写</>;
+  return <>{text.split(/(https?:\/\/[^\s<>"'，。；、（）【】「」《》“”‘’]+)/gi).map((part, index) => {
+    if (!/^https?:\/\//i.test(part)) return part;
+    const link = part.replace(/[.!?;:,)\]}]+$/, "");
+    try { new URL(link); } catch { return part; }
+    return <span key={index}><a href={link} target="_blank" rel="noopener noreferrer" className="break-all text-brand-700 underline underline-offset-2">{link}</a>{part.slice(link.length)}</span>;
+  })}</>;
+}
+
 export function VideoForm({ v, accounts, editors, cutters, ideaId, defaultTitle }: {
   v?: VideoRow; accounts: Account[]; editors: Person[]; cutters: Person[]; ideaId?: number; defaultTitle?: string;
 }) {
   const levels = Object.keys(getRules().cut_levels);
+  if (v && !levels.includes(v.cut_level)) levels.push(v.cut_level);
+  const includeAssignee = (options: Person[], id: number | null, name: string | null | undefined, role: string) => id && !options.some((p) => p.id === id)
+    ? [...options, { id, name: `${name ?? "原负责人"}（已不可用）`, role }] : options;
+  const editorOptions = includeAssignee(editors, v?.editor_id ?? null, v?.editor_name, "editor");
+  const cutterOptions = includeAssignee(cutters, v?.cutter_id ?? null, v?.cutter_name, "cutter");
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-5 sm:grid-cols-2">
       {v && <input type="hidden" name="id" value={v.id} />}
+      {v && <input type="hidden" name="revision" value={v.revision} />}
       {ideaId && <input type="hidden" name="idea_id" value={ideaId} />}
-      <Field label="选题/标题" className="sm:col-span-2 lg:col-span-4">
+      <Field label="选题/标题" className="sm:col-span-2">
         <input name="title" required defaultValue={v?.title ?? defaultTitle} className="input" />
       </Field>
       <Field label="账号"><Select name="account_id" required defaultValue={v?.account_id} placeholder="选择账号" options={accounts.map((a) => ({ value: a.id, label: a.name }))} /></Field>
-      <Field label="编导"><Select name="editor_id" required defaultValue={v?.editor_id} placeholder="选择编导" options={editors.map((p) => ({ value: p.id, label: p.name }))} /></Field>
-      <Field label="剪辑"><Select name="cutter_id" defaultValue={v?.cutter_id} placeholder="待定" options={cutters.map((p) => ({ value: p.id, label: p.name }))} /></Field>
+      <Field label="编导"><Select name="editor_id" required defaultValue={v?.editor_id} placeholder="选择编导" options={editorOptions.map((p) => ({ value: p.id, label: p.name }))} /></Field>
+      <Field label="剪辑"><Select name="cutter_id" defaultValue={v?.cutter_id} placeholder="待定" options={cutterOptions.map((p) => ({ value: p.id, label: p.name }))} /></Field>
       <Field label="剪辑定档"><Select name="cut_level" defaultValue={v?.cut_level ?? "常规"} options={levels} /></Field>
       <Field label="类型"><Select name="content_type" defaultValue={v?.content_type} placeholder="—" options={["剧情", "口播", "情景", "vlog", "其他"]} /></Field>
       <Field label="改版加件"><input name="extra_units" type="number" step="0.5" min="0" defaultValue={v?.extra_units ?? 0} className="input" /></Field>
-      <div className="hidden lg:block lg:col-span-2" />
       <Field label="脚本截止"><input type="date" name="due_script" defaultValue={v?.due_script ?? ""} className="input" /></Field>
       <Field label="拍摄截止"><input type="date" name="due_shoot" defaultValue={v?.due_shoot ?? ""} className="input" /></Field>
       <Field label="初剪截止"><input type="date" name="due_rough" defaultValue={v?.due_rough ?? ""} className="input" /></Field>
       <Field label="审核截止"><input type="date" name="due_review" defaultValue={v?.due_review ?? ""} className="input" /></Field>
       <Field label="发布日期（前24h冻结）"><input type="date" name="publish_date" defaultValue={v?.publish_date ?? ""} className="input" /></Field>
-      <Field label="需求说明 / 脚本链接" className="sm:col-span-2 lg:col-span-3">
+      <Field label="需求说明 / 脚本链接" className="sm:col-span-2">
         <textarea name="brief" rows={3} defaultValue={v?.brief ?? ""} className="input" placeholder="给剪辑的需求：风格、参考、重点镜头、脚本文档链接…" />
       </Field>
-      <Field label="备注" className="sm:col-span-2 lg:col-span-4"><input name="note" defaultValue={v?.note ?? ""} className="input" /></Field>
+      {v && <Field label="调整原因（交付后修改定档、加件或初剪截止时必填）" className="sm:col-span-2"><input name="change_reason" className="input" placeholder="如：新增两个改版版本，确认加件1件" /></Field>}
+      <Field label="备注" className="sm:col-span-2"><input name="note" defaultValue={v?.note ?? ""} className="input" /></Field>
     </div>
   );
 }

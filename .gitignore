@@ -45,3 +45,6 @@ next-env.d.ts
 !.env.example
 *.sqlite*
 *.db*
+
+# Generated local worker output
+.account-review-worker/

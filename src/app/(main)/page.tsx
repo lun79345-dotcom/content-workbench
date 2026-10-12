@@ -3,7 +3,7 @@ import { AlarmClock, BookOpen, ChartColumn, ChevronRight, ClipboardCheck, Clappe
 import { requireUser } from "@/lib/auth";
 import { all, get } from "@/lib/db";
 import { leaderId, listVideos } from "@/lib/queries";
-import { addDays, currentDue, diffDays, fmtNum, monthOf, overdueDays, stageOwner, today, type VideoRow } from "@/lib/rules";
+import { currentDue, diffDays, fmtNum, monthOf, overdueDays, stageOwner, today, needsMetrics, type VideoRow } from "@/lib/rules";
 import { Empty, Section, Stat, Tag } from "@/components/ui";
 import { DueTag, STAGE_COLOR } from "@/components/video";
 
@@ -38,14 +38,12 @@ export default async function Home() {
      WHERE r.status='待审' AND r.reviewer_id=? ORDER BY r.id`, me.id);
 
   // 需要登记数据：第7天/第30天已到但未登记完整（编导负责）
-  const pub = listVideos("v.stage='已发布' AND v.published_at >= ?" + (boss ? "" : " AND v.editor_id=" + me.id), addDays(t, -40));
-  const filled = all<{ video_id: number; checkpoint: string; n: number }>(
-    "SELECT video_id, checkpoint, count(plays) n FROM metrics WHERE platform IN ('douyin','wechat') GROUP BY video_id, checkpoint");
+  const pub = listVideos("v.stage='已发布'" + (boss ? "" : " AND v.editor_id=" + me.id));
   const needData: { v: VideoRow; cp: string }[] = [];
   for (const v of pub) {
     const age = diffDays(t, v.published_at!);
     for (const [cp, d] of [["d7", 7], ["d30", 30]] as const) {
-      if (age >= d && (filled.find((f) => f.video_id === v.id && f.checkpoint === cp)?.n ?? 0) < 2) needData.push({ v, cp });
+      if (age >= d && needsMetrics(v.id, cp)) needData.push({ v, cp });
     }
   }
 
@@ -66,7 +64,7 @@ export default async function Home() {
             {me.name}，{todo === 0 ? "今天没有待办" : <>今天有 <span className="text-brand-600">{todo}</span> 件事等你</>}
           </h1>
         </div>
-        {me.role !== "cutter" && <Link href="/videos/new" className="btn btn-primary"><Plus size={16} />新建选题</Link>}
+        {me.role !== "cutter" && <Link href="/videos/new" className="btn btn-primary"><Plus size={16} />新建需求单</Link>}
       </div>
 
       {isNew && (

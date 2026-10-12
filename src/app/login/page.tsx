@@ -47,7 +47,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
             )}
             {devLoginEnabled() && (
               <form action={devLogin} className="mt-6 space-y-2">
-                <p className="text-xs text-stone-400">本地演示：虚构身份，仅用于体验{feishuEnabled() ? "" : "（未连接企业飞书）"}</p>
+                <p className="text-xs text-stone-400">开发模式：选择身份直接登录{feishuEnabled() ? "" : "（未配置飞书 App）"}</p>
                 <div className="grid grid-cols-2 gap-2">
                   {users.map((u) => (
                     <button key={u.id} name="uid" value={u.id} className="rounded-lg border border-stone-200 px-3 py-2 text-left text-sm hover:bg-stone-50">
